@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PanoForge</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <h1 class="brand">PanoForge</h1>
+      <nav class="tabs" role="tablist" aria-label="Vues de l'application">
+        <button type="button" class="tab-btn" role="tab" id="tab-files" aria-selected="true" aria-controls="view-files" data-view="files">Fichiers</button>
+        <button type="button" class="tab-btn" role="tab" id="tab-queue" aria-selected="false" aria-controls="view-queue" data-view="queue">File d'attente <span id="queue-count" class="badge-count" hidden>0</span></button>
+        <button type="button" class="tab-btn" role="tab" id="tab-preview" aria-selected="false" aria-controls="view-preview" data-view="preview">Aperçu 360°</button>
+      </nav>
+      <div class="topbar-status">
+        <span id="gpu-status" class="status-pill">GPU : …</span>
+        <button type="button" id="settings-btn" class="icon-btn" aria-label="Paramètres des dossiers" title="Paramètres">⚙</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Vue Fichiers : point d'entrée unique de tout chargement -->
+      <section id="view-files" class="view" role="tabpanel" aria-labelledby="tab-files">
+        <!-- Barre d'outils (hub) : dossier source + accès rapide + ouvrir un fichier -->
+        <div class="files-hub">
+          <div class="files-hub-row">
+            <span class="files-hub-label">📁 Dossier source</span>
+            <span id="source-dir-path" class="source-dir-path" title="Dossier source courant"></span>
+            <button type="button" id="source-browse-btn" class="btn small">Parcourir…</button>
+            <div class="toolbar-spacer"></div>
+            <button type="button" id="open-file-btn" class="btn">Ouvrir un fichier…</button>
+          </div>
+          <div class="files-hub-row">
+            <span class="files-hub-label">Accès rapide</span>
+            <nav id="files-shortcuts" class="files-shortcuts" aria-label="Accès rapide (supports amovibles, caméra)"></nav>
+          </div>
+        </div>
+
+        <div class="files-toolbar">
+          <label class="checkbox-label">
+            <input type="checkbox" id="select-all" />
+            Tout sélectionner
+          </label>
+          <span id="selection-count" class="muted">0 fichier sélectionné</span>
+          <div class="toolbar-spacer"></div>
+          <button type="button" id="refresh-files-btn" class="btn">Actualiser</button>
+          <button type="button" id="convert-selection-btn" class="btn primary" disabled>Convertir la sélection</button>
+        </div>
+        <div id="files-grid" class="files-grid" aria-live="polite"></div>
+        <p id="files-empty" class="empty-state" hidden>Aucun fichier .OSV trouvé dans le dossier source.</p>
+        <p id="files-loading" class="empty-state">Chargement des fichiers…</p>
+      </section>
+
+      <!-- Vue File d'attente -->
+      <section id="view-queue" class="view" role="tabpanel" aria-labelledby="tab-queue" hidden>
+        <div class="queue-list" id="queue-list" aria-live="polite"></div>
+        <p id="queue-empty" class="empty-state">Aucun job dans la file d'attente.</p>
+      </section>
+
+      <!-- Vue Aperçu 360° -->
+      <section id="view-preview" class="view" role="tabpanel" aria-labelledby="tab-preview" hidden>
+        <div class="preview-toolbar">
+          <span id="preview-title" class="preview-title">Aucun média chargé</span>
+          <div class="preview-controls">
+            <button type="button" id="preview-playpause" class="btn" disabled>Lecture</button>
+            <button type="button" id="preview-reset-view" class="btn" disabled>Réinitialiser la vue</button>
+            <button type="button" id="photo-panel-toggle" class="btn" aria-expanded="false" aria-controls="photo-panel">Extraire une photo</button>
+          </div>
+        </div>
+        <div class="preview-layout">
+          <div id="viewer-container" class="viewer-container">
+            <canvas id="viewer-canvas" tabindex="0"
+              aria-label="Visionneuse 360°. Glisser pour orienter la vue, molette pour zoomer, flèches et plus/moins au clavier."></canvas>
+            <div id="capture-overlay" class="capture-overlay" hidden aria-hidden="true">
+              <div id="capture-frame" class="capture-frame">
+                <span class="capture-handle edge" data-handle="n"></span>
+                <span class="capture-handle edge" data-handle="s"></span>
+                <span class="capture-handle edge" data-handle="e"></span>
+                <span class="capture-handle edge" data-handle="w"></span>
+                <span class="capture-handle corner" data-handle="nw"></span>
+                <span class="capture-handle corner" data-handle="ne"></span>
+                <span class="capture-handle corner" data-handle="sw"></span>
+                <span class="capture-handle corner" data-handle="se"></span>
+              </div>
+              <p id="capture-overlay-warn" class="capture-overlay-warn" hidden>Le cadre demandé dépasse la vue — élargissez le zoom (molette).</p>
+            </div>
+            <p id="viewer-empty" class="empty-state">Aucun média chargé. Pour ouvrir un média, passez par l'onglet <strong>Fichiers</strong> (« Ouvrir un fichier… » ou « Ouvrir en 360° » sur une carte). Cet écran ne sert qu'à regarder et extraire.</p>
+            <p id="viewer-projection-note" class="viewer-projection-note muted small" hidden>Prévisualisation basse résolution — l'extraction est en pleine qualité.</p>
+            <p id="viewer-help" class="viewer-help muted small">Glisser : orienter · Molette : zoomer · Flèches : orienter · +/- : zoomer</p>
+          </div>
+
+          <!-- Panneau Extraire une photo -->
+          <aside id="photo-panel" class="photo-panel" hidden aria-label="Extraire une photo">
+            <h3 class="photo-panel-title">Extraire une photo</h3>
+
+            <div class="field">
+              <label for="photo-projection">Projection</label>
+              <select id="photo-projection">
+                <option value="flat">Photo plate</option>
+                <option value="cylindrical">Panorama cylindrique 360°</option>
+                <option value="equirect360">Photo 360° complète (GPano)</option>
+                <option value="littleplanet">Petite planète</option>
+              </select>
+            </div>
+
+            <div id="photo-flat-fields">
+              <div class="field">
+                <label for="photo-ratio">Ratio</label>
+                <select id="photo-ratio">
+                  <option value="16:9">16:9</option>
+                  <option value="21:9">21:9</option>
+                  <option value="32:9">32:9</option>
+                  <option value="4:3">4:3</option>
+                  <option value="1:1">1:1</option>
+                  <option value="9:16">9:16 (portrait)</option>
+                  <option value="custom">Libre…</option>
+                </select>
+                <div id="photo-ratio-custom" class="photo-ratio-custom" hidden>
+                  <label class="visually-hidden" for="photo-ratio-w">Largeur du ratio</label>
+                  <input type="number" id="photo-ratio-w" min="0.1" step="0.1" value="16" aria-label="Largeur du ratio" />
+                  <span aria-hidden="true">:</span>
+                  <label class="visually-hidden" for="photo-ratio-h">Hauteur du ratio</label>
+                  <input type="number" id="photo-ratio-h" min="0.1" step="0.1" value="9" aria-label="Hauteur du ratio" />
+                </div>
+                <p id="photo-ratio-warn" class="muted small photo-ratio-warn" hidden>Ratio hors limites : largeur/hauteur doit rester entre 0,2 et 8.</p>
+              </div>
+              <div class="field">
+                <label for="photo-hfov">FOV horizontal : <output id="photo-hfov-value">90</output>°</label>
+                <input type="range" id="photo-hfov" min="30" max="140" step="1" value="90" />
+              </div>
+              <div class="field photo-ypr">
+                <span class="photo-ypr-legend">Orientation (synchronisée avec la vue)</span>
+                <div class="photo-ypr-row">
+                  <label>Yaw <input type="number" id="photo-yaw" step="0.1" value="0" /></label>
+                  <label>Pitch <input type="number" id="photo-pitch" step="0.1" min="-85" max="85" value="0" /></label>
+                  <label>Roll <input type="number" id="photo-roll" step="0.1" value="0" /></label>
+                </div>
+              </div>
+            </div>
+
+            <div id="photo-cyl-fields" hidden>
+              <div class="field">
+                <label for="photo-cyl-yaw">Yaw de départ (°)</label>
+                <input type="number" id="photo-cyl-yaw" step="0.1" value="0" />
+              </div>
+              <div class="field">
+                <label for="photo-vspan">Hauteur verticale : <output id="photo-vspan-value">60</output>°</label>
+                <input type="range" id="photo-vspan" min="30" max="120" step="1" value="60" />
+              </div>
+            </div>
+
+            <div id="photo-planet-fields" hidden>
+              <div class="field">
+                <label for="photo-rotation">Rotation : <output id="photo-rotation-value">0</output>°</label>
+                <input type="range" id="photo-rotation" min="0" max="360" step="1" value="0" />
+              </div>
+            </div>
+
+            <p id="photo-equirect-note" class="muted small" hidden>
+              Photo sphérique équirectangulaire complète (métadonnées GPano injectées) — aucun réglage.
+            </p>
+
+            <div class="field">
+              <label for="photo-outw">Résolution de sortie</label>
+              <select id="photo-outw">
+                <option value="">Pleine résolution</option>
+                <option value="3840">4K (3840 px)</option>
+                <option value="2048">2K (2048 px)</option>
+              </select>
+            </div>
+
+            <p class="muted small">Temps courant : <span id="photo-time">—</span></p>
+
+            <button type="button" id="photo-extract-btn" class="btn primary" disabled>Extraire la photo</button>
+            <div id="photo-spinner" class="photo-spinner" hidden role="status">
+              <span class="spinner" aria-hidden="true"></span> Extraction en cours…
+            </div>
+
+            <div id="photo-result" class="photo-result" hidden>
+              <img id="photo-result-img" alt="Aperçu de la photo extraite" />
+              <p id="photo-result-path" class="muted small photo-result-path"></p>
+              <button type="button" id="photo-extract-again" class="btn">Extraire à nouveau</button>
+            </div>
+            <p id="photo-error" class="photo-error" hidden aria-live="polite"></p>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <!-- Panneau Options de conversion -->
+    <div id="options-overlay" class="overlay" hidden>
+      <div id="options-panel" class="panel" role="dialog" aria-modal="true" aria-labelledby="options-title">
+        <div class="panel-header">
+          <h2 id="options-title">Options de conversion</h2>
+          <button type="button" id="options-close" class="icon-btn" aria-label="Fermer le panneau d'options">✕</button>
+        </div>
+        <div class="panel-body">
+          <p id="options-selection-summary" class="muted small"></p>
+
+          <fieldset class="field-group">
+            <legend>Sortie</legend>
+
+            <div class="field">
+              <label for="opt-resolution">Résolution</label>
+              <select id="opt-resolution">
+                <option value="7680">7680 × 3840 (8K)</option>
+                <option value="6144">6144 × 3072 (6K)</option>
+                <option value="3840">3840 × 1920 (4K)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="opt-codec">Codec</label>
+              <select id="opt-codec">
+                <option value="hevc">HEVC (H.265)</option>
+                <option value="h264">H.264</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="opt-encoder">Encodeur</label>
+              <select id="opt-encoder">
+                <option value="auto">Automatique</option>
+                <option value="nvenc">GPU (NVENC)</option>
+                <option value="cpu">CPU (logiciel)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="opt-quality">Qualité (CQ/CRF) : <output id="opt-quality-value">20</output></label>
+              <input type="range" id="opt-quality" min="16" max="28" step="1" value="20" />
+              <p class="muted small">Plus la valeur est basse, meilleure est la qualité (fichier plus lourd).</p>
+            </div>
+
+            <div class="field">
+              <label for="opt-interp">Interpolation</label>
+              <select id="opt-interp">
+                <option value="lanczos">Lanczos (haute qualité, plus lent)</option>
+                <option value="line">Bilinéaire (rapide)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="opt-mode">Mode de stitching</label>
+              <select id="opt-mode">
+                <option value="auto">Automatique</option>
+                <option value="v360">v360 (rapide)</option>
+                <option value="calibrated">Calibré (précis, plus lent)</option>
+              </select>
+            </div>
+
+            <div class="field stabilize-field">
+              <div class="field-inline">
+                <label class="checkbox-label" for="opt-stabilize">
+                  <input type="checkbox" id="opt-stabilize" />
+                  Stabilisation
+                </label>
+                <span id="opt-stabilize-locked-badge" class="badge-soon" hidden>désactivée</span>
+              </div>
+              <div id="opt-stabilize-controls" class="stabilize-controls" hidden>
+                <div class="field">
+                  <label for="opt-stabilize-mode">Mode</label>
+                  <select id="opt-stabilize-mode">
+                    <option value="horizon">Horizon (niveler l'horizon)</option>
+                    <option value="lock">Verrouillé (orientation absolue)</option>
+                    <option value="smooth">Lissé (anti-secousses)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="opt-stabilize-strength">Force : <output id="opt-stabilize-strength-value">50</output> %</label>
+                  <input type="range" id="opt-stabilize-strength" min="0" max="100" step="1" value="50" />
+                </div>
+              </div>
+              <p id="opt-stabilize-streetview-note" class="stabilize-locked-note muted small" hidden>Désactivée pour Street View.</p>
+            </div>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>Profil Street View</legend>
+            <div class="field field-inline">
+              <label class="checkbox-label" for="opt-streetview">
+                <input type="checkbox" id="opt-streetview" />
+                Activer le profil Street View
+              </label>
+            </div>
+            <p class="muted small">Force 5 im/s et l'injection de la piste GPS (CAMM), stabilisation désactivée.</p>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>GPX (position GPS)</legend>
+
+            <div class="field">
+              <label for="opt-gpx-path">Fichier GPX (chemin complet)</label>
+              <div class="field-row">
+                <input type="text" id="opt-gpx-path" placeholder="/chemin/vers/trace.gpx" />
+                <button type="button" class="btn file-btn" id="opt-gpx-browse">Parcourir…</button>
+              </div>
+            </div>
+
+            <div class="field field-inline">
+              <label class="checkbox-label" for="opt-embed-camm">
+                <input type="checkbox" id="opt-embed-camm" />
+                Injecter la piste CAMM (GPS) dans la sortie
+              </label>
+            </div>
+
+            <div class="field">
+              <button type="button" id="opt-gpx-analyze" class="btn">Analyser</button>
+              <div id="gpx-analyze-result" class="gpx-result" hidden aria-live="polite"></div>
+            </div>
+
+            <div class="field">
+              <label for="opt-gpx-offset">Décalage GPX : <output id="opt-gpx-offset-value">0</output> s</label>
+              <input type="range" id="opt-gpx-offset" min="-300" max="300" step="0.5" value="0" />
+            </div>
+          </fieldset>
+        </div>
+        <div class="panel-footer">
+          <button type="button" id="options-cancel" class="btn">Annuler</button>
+          <button type="button" id="options-launch" class="btn primary">Lancer la conversion</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panneau Paramètres -->
+    <div id="settings-overlay" class="overlay" hidden>
+      <div id="settings-panel" class="panel small" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="panel-header">
+          <h2 id="settings-title">Paramètres</h2>
+          <button type="button" id="settings-close" class="icon-btn" aria-label="Fermer les paramètres">✕</button>
+        </div>
+        <div class="panel-body">
+          <div class="field">
+            <label for="settings-source-dir">Dossier source (.OSV)</label>
+            <div class="field-row">
+              <input type="text" id="settings-source-dir" />
+              <button type="button" class="btn file-btn" id="settings-source-browse">Parcourir…</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="settings-output-dir">Dossier de sortie</label>
+            <div class="field-row">
+              <input type="text" id="settings-output-dir" />
+              <button type="button" class="btn file-btn" id="settings-output-browse">Parcourir…</button>
+            </div>
+          </div>
+          <p id="settings-version" class="muted small"></p>
+        </div>
+        <div class="panel-footer">
+          <button type="button" id="settings-cancel" class="btn">Annuler</button>
+          <button type="button" id="settings-save" class="btn primary">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sélecteur de fichiers/dossiers (GET /api/browse) -->
+    <div id="browser-overlay" class="overlay" hidden>
+      <div id="browser-panel" class="panel small browser-panel" role="dialog" aria-modal="true" aria-labelledby="browser-title">
+        <div class="panel-header">
+          <h2 id="browser-title">Choisir…</h2>
+          <button type="button" id="browser-close" class="icon-btn" aria-label="Fermer le sélecteur de fichiers">✕</button>
+        </div>
+        <div class="browser-body">
+          <nav id="browser-shortcuts" class="browser-shortcuts" aria-label="Accès rapide"></nav>
+          <div class="browser-main">
+            <div id="browser-path" class="browser-path" aria-live="polite"></div>
+            <ul id="browser-list" class="browser-list" role="listbox" tabindex="0" aria-labelledby="browser-title"></ul>
+          </div>
+        </div>
+        <div class="panel-footer browser-footer">
+          <span id="browser-hint" class="muted small"></span>
+          <span class="toolbar-spacer"></span>
+          <button type="button" id="browser-cancel" class="btn">Annuler</button>
+          <button type="button" id="browser-choose" class="btn primary">Choisir</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
