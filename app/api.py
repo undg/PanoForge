@@ -140,10 +140,13 @@ def get_files(dir: Optional[str] = None):
 
 def _browse_roots() -> list[str]:
     """Allowed roots for navigation: $HOME, /run/media, /media,
-    /run/user/<uid>/gvfs (MTP camera mounts)."""
+    /run/user/<uid>/gvfs (MTP camera mounts), plus the configured
+    source/output folders (so a source_dir on any mount is usable)."""
+    cfg = config.get_config()
     return [os.path.realpath(r) for r in (
         str(Path.home()), "/run/media", "/media", config.gvfs_root(),
-    )]
+        cfg.source_dir, cfg.output_dir,
+    ) if r]
 
 
 def _resolve_browse_dir(path: str) -> tuple[str, str]:

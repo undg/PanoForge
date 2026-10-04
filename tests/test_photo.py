@@ -339,3 +339,14 @@ def test_api_navproxy_rejects_other_types(client, isolated_config, tmp_path):
     bad.write_text("<gpx/>")
     r = client.get("/api/photo/navproxy", params={"path": str(bad)})
     assert r.status_code in (400, 403)  # 403 if tmp outside HOME, otherwise 400
+
+
+def test_api_navproxy_mp4_in_configured_source_dir(client, isolated_config):
+    """A source_dir outside $HOME (e.g. /mnt) must be accepted by navproxy:
+    the configured source/output folders are navigation roots too."""
+    src = isolated_config["source_dir"]
+    fake = src / "clip.mp4"
+    fake.write_bytes(b"\x00\x00\x00\x18ftypmp42")  # .mp4 fast path, content unused
+    r = client.get("/api/photo/navproxy", params={"path": str(fake)})
+    assert r.status_code == 200, r.text
+    assert r.json()["proxy_url"].startswith("/api/media?path=")

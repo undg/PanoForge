@@ -139,7 +139,8 @@ def export_windowed_gpx(points, video_start_utc, duration_s, offset_s, out_path)
   the picker truncates the stem but keeps the extension visible + tooltip of the full name).
   `dir` defaults to home. `filter` = comma-separated extensions, case-insensitive
   (e.g. `osv` or `gpx`); without `filter`, `files` stays empty (folder choice).
-  Navigation restricted to $HOME, /run/media and /media; hidden entries (.*) excluded;
+  Navigation restricted to $HOME, /run/media, /media, gvfs mounts and the
+  configured source/output folders; hidden entries (.*) excluded;
   folders sorted before files, alphabetical order. Outside allowed scope → 403.
 - `GET  /` → static frontend
 
@@ -232,8 +233,9 @@ The file picker must give quick access to removable media.
     otherwise; document that the Osmo "USB storage" mode shows up as
     `removable` instead.
   - `source`/`output`: current configured folders.
-- The allowed browse roots already include `/run/media` and `/media`; add
-  `/run/user/<uid>/gvfs` to the whitelist for the MTP camera.
+- The allowed browse roots already include `/run/media`, `/media` and the
+  configured source/output folders; add `/run/user/<uid>/gvfs` to the whitelist
+  for the MTP camera.
 - UI (`filebrowser.js`): "Quick access" column/banner listing these shortcuts
   (icon per kind), a click navigates to the folder. Refreshed when the modal opens.
 

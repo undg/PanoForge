@@ -131,7 +131,7 @@ See `SPEC.md` for the full contract. Summary:
 | GET     | `/api/files`        | List `.OSV` files (recursive, 1 level)                    |
 | GET     | `/api/thumb`        | Embedded JPEG thumbnail (on-disk cache)                   |
 | POST    | `/api/probe`        | Technical info + calibration available or not             |
-| GET     | `/api/browse`       | Folder/file navigation for the UI (`dir`, `filter`) — restricted to `$HOME`, `/run/media`, `/media`, gvfs |
+| GET     | `/api/browse`       | Folder/file navigation for the UI (`dir`, `filter`) — restricted to `$HOME`, `/run/media`, `/media`, gvfs, and the configured source/output folders |
 | GET     | `/api/browse/roots` | Quick-access shortcuts (Home, removable volumes, camera, source/output) |
 | POST    | `/api/gpx/analyze`  | Analyze GPX coverage vs. video                            |
 | POST    | `/api/jobs`         | Create one conversion job per file                        |
