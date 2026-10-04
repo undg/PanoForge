@@ -1,13 +1,13 @@
-// PanoForge — sélecteur de fichiers/dossiers (modal, GET /api/browse)
+// PanoForge — file/folder chooser (modal, GET /api/browse)
 // openFileBrowser({title, filter, startDir}) → Promise<string|null>
-//   filter = extensions CSV (ex. "gpx") → choix de fichier ; sans filter → choix de dossier.
+//   filter = CSV extensions (e.g. "gpx") → file selection; without filter → folder selection.
 
 import * as api from "/js/api.js";
 
 let els = null;
 let current = null; // { resolve, filter, dir, parent, entries, selectedIndex, lastFocus }
 
-// Icônes du bandeau « Accès rapide » par nature de raccourci (GET /api/browse/roots)
+// Icons for the "Quick access" bar by shortcut kind (GET /api/browse/roots)
 const SHORTCUT_ICONS = {
   home: "🏠",
   removable: "💾",
@@ -16,11 +16,11 @@ const SHORTCUT_ICONS = {
   camera: "📷",
 };
 const SHORTCUT_LABELS_FALLBACK = {
-  home: "Dossier personnel",
-  removable: "Support amovible",
-  source: "Dossier source",
-  output: "Dossier de sortie",
-  camera: "Caméra",
+  home: "Home folder",
+  removable: "Removable volume",
+  source: "Source folder",
+  output: "Output folder",
+  camera: "Camera",
 };
 
 function ensureEls() {
@@ -64,10 +64,10 @@ function chooseCurrent() {
   if (!current) return;
   const entry = current.entries[current.selectedIndex];
   if (current.filter) {
-    // Mode fichier : il faut un fichier sélectionné
+    // File mode: a file must be selected
     if (entry && entry.kind === "file") finish(entry.path);
   } else {
-    // Mode dossier : dossier sélectionné, sinon dossier courant
+    // Folder mode: selected folder, otherwise current folder
     if (entry && entry.kind === "dir") finish(entry.path);
     else finish(current.dir);
   }
@@ -138,13 +138,13 @@ function updateChooseState() {
   } else {
     els.choose.disabled = false;
     els.choose.textContent =
-      entry && entry.kind === "dir" ? "Choisir ce dossier" : "Choisir le dossier courant";
+      entry && entry.kind === "dir" ? "Choose this folder" : "Choose current folder";
   }
 }
 
 function formatSize(bytes) {
   if (bytes == null) return "";
-  const units = ["o", "Ko", "Mo", "Go"];
+  const units = ["B", "KB", "MB", "GB"];
   let v = bytes;
   let i = 0;
   while (v >= 1024 && i < units.length - 1) {
@@ -162,8 +162,8 @@ function formatDate(mtime) {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-// Sépare le radical et l'extension pour que l'extension reste toujours visible
-// (le radical est tronqué par CSS, jamais l'extension).
+// Splits the basename and the extension so that the extension stays always visible
+// (the basename is truncated by CSS, never the extension).
 function splitName(name) {
   const dot = name.lastIndexOf(".");
   if (dot > 0 && dot < name.length - 1) {
@@ -182,7 +182,7 @@ function render() {
     li.setAttribute("aria-selected", "false");
     li.className = `browser-item ${entry.kind}`;
     const icon = entry.kind === "file" ? "🗎" : entry.kind === "parent" ? "↩" : "🗀";
-    const label = entry.kind === "parent" ? ".. (dossier parent)" : entry.name;
+    const label = entry.kind === "parent" ? ".. (parent folder)" : entry.name;
     li.innerHTML =
       `<span class="browser-icon" aria-hidden="true">${icon}</span>` +
       `<span class="browser-name"><span class="browser-name-base"></span><span class="browser-ext"></span></span>` +
@@ -195,7 +195,7 @@ function render() {
     } else {
       li.querySelector(".browser-name-base").textContent = label;
     }
-    li.querySelector(".browser-name").title = label; // nom complet au survol
+    li.querySelector(".browser-name").title = label; // full name on hover
     li.querySelector(".browser-date").textContent =
       entry.kind === "parent" ? "" : formatDate(entry.mtime);
     li.querySelector(".browser-size").textContent =
@@ -207,18 +207,18 @@ function render() {
   if (current.entries.length === 0) {
     const li = document.createElement("li");
     li.className = "browser-item empty muted";
-    li.textContent = current.filter ? "Aucun fichier correspondant dans ce dossier." : "Dossier vide.";
+    li.textContent = current.filter ? "No matching file in this folder." : "Empty folder.";
     els.list.appendChild(li);
   }
   setSelected(Math.min(current.selectedIndex, Math.max(0, current.entries.length - 1)));
   updateChooseState();
 }
 
-// ---------- Bandeau « Accès rapide » (GET /api/browse/roots) ----------
+// ---------- "Quick access" bar (GET /api/browse/roots) ----------
 
-// Construit un bouton de raccourci (icône + libellé) ; `onPick(path)` est appelé au clic.
-// Composant partagé entre le modal (navigation) et la barre d'outils Fichiers
-// (changement du dossier source).
+// Builds a shortcut button (icon + label); `onPick(path)` is called on click.
+// Component shared between the modal (navigation) and the Files toolbar
+// (changing the source folder).
 function buildShortcutButton(s, onPick) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -242,7 +242,7 @@ function fillShortcuts(container, shortcuts, onPick) {
   if (!shortcuts || shortcuts.length === 0) {
     const empty = document.createElement("p");
     empty.className = "browser-shortcuts-empty";
-    empty.textContent = "Aucun raccourci disponible.";
+    empty.textContent = "No shortcut available.";
     container.appendChild(empty);
     return;
   }
@@ -251,7 +251,7 @@ function fillShortcuts(container, shortcuts, onPick) {
 
 function renderShortcuts(shortcuts) {
   if (!els.shortcuts) return;
-  // Dans le modal, cliquer un raccourci navigue vers le dossier.
+  // In the modal, clicking a shortcut navigates to the folder.
   fillShortcuts(els.shortcuts, shortcuts, (path) => {
     if (current) load(path);
   });
@@ -259,33 +259,33 @@ function renderShortcuts(shortcuts) {
 
 async function loadShortcuts() {
   if (!els.shortcuts) return;
-  els.shortcuts.innerHTML = '<p class="browser-shortcuts-empty">Chargement…</p>';
+  els.shortcuts.innerHTML = '<p class="browser-shortcuts-empty">Loading…</p>';
   try {
     const data = await api.browseRoots();
-    if (!current) return; // le modal a été fermé entre-temps
+    if (!current) return; // the modal was closed in the meantime
     renderShortcuts(data.shortcuts || []);
   } catch (err) {
     if (!current) return;
-    els.shortcuts.innerHTML = '<p class="browser-shortcuts-empty">Accès rapide indisponible.</p>';
+    els.shortcuts.innerHTML = '<p class="browser-shortcuts-empty">Quick access unavailable.</p>';
   }
 }
 
 /**
- * Monte le bandeau « Accès rapide » (mêmes raccourcis /api/browse/roots que le
- * modal) dans un conteneur permanent hors du modal — utilisé par la barre d'outils
- * de la vue Fichiers. `onPick(path)` est appelé au clic d'un raccourci.
+ * Mounts the "Quick access" bar (same /api/browse/roots shortcuts as the
+ * modal) into a permanent container outside the modal — used by the Files view
+ * toolbar. `onPick(path)` is called when a shortcut is clicked.
  * @param {HTMLElement} container
  * @param {(path: string) => void} onPick
  * @returns {Promise<void>}
  */
 export async function mountShortcuts(container, onPick) {
   if (!container) return;
-  container.innerHTML = '<p class="browser-shortcuts-empty">Chargement…</p>';
+  container.innerHTML = '<p class="browser-shortcuts-empty">Loading…</p>';
   try {
     const data = await api.browseRoots();
     fillShortcuts(container, data.shortcuts || [], onPick);
   } catch (err) {
-    container.innerHTML = '<p class="browser-shortcuts-empty">Accès rapide indisponible.</p>';
+    container.innerHTML = '<p class="browser-shortcuts-empty">Quick access unavailable.</p>';
   }
 }
 
@@ -305,7 +305,7 @@ async function load(dir) {
     render();
   } catch (err) {
     if (dir) {
-      // Dossier de départ hors périmètre / inexistant : retomber sur le défaut serveur
+      // Starting folder out of scope / nonexistent: fall back to the server default
       load(null);
     } else {
       els.path.textContent = "";
@@ -321,15 +321,15 @@ async function load(dir) {
 }
 
 /**
- * Ouvre le sélecteur.
+ * Opens the chooser.
  * @param {{title: string, filter?: string|null, startDir?: string|null}} opts
- * @returns {Promise<string|null>} chemin choisi, ou null si annulé
+ * @returns {Promise<string|null>} chosen path, or null if cancelled
  */
 export function openFileBrowser({ title, filter = null, startDir = null }) {
   ensureEls();
   return new Promise((resolve) => {
     if (current) {
-      // Un seul sélecteur à la fois : annule le précédent
+      // Only one chooser at a time: cancel the previous one
       const prev = current;
       current = null;
       prev.resolve(null);
@@ -345,13 +345,13 @@ export function openFileBrowser({ title, filter = null, startDir = null }) {
     };
     els.title.textContent = title;
     els.hint.textContent = filter
-      ? `Fichiers affichés : .${filter.split(",").join(", .")}`
-      : "Choix d'un dossier";
-    els.choose.textContent = filter ? "Choisir" : "Choisir le dossier courant";
+      ? `Displayed files: .${filter.split(",").join(", .")}`
+      : "Folder selection";
+    els.choose.textContent = filter ? "Choose" : "Choose current folder";
     els.choose.disabled = Boolean(filter);
     els.overlay.hidden = false;
     els.list.focus();
-    loadShortcuts(); // rafraîchi à chaque ouverture du modal
+    loadShortcuts(); // refreshed every time the modal opens
     load(startDir);
   });
 }

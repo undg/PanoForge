@@ -1,4 +1,4 @@
-// PanoForge — client API REST (contrat défini dans SPEC.md)
+// PanoForge — REST API client (contract defined in SPEC.md)
 
 async function request(path, { method = "GET", body } = {}) {
   const opts = { method, headers: {} };
@@ -10,7 +10,7 @@ async function request(path, { method = "GET", body } = {}) {
   try {
     res = await fetch(path, opts);
   } catch (err) {
-    throw new Error(`Impossible de contacter le serveur (${path}) : ${err.message}`);
+    throw new Error(`Cannot reach the server (${path}): ${err.message}`);
   }
   if (!res.ok) {
     let detail = "";
@@ -20,7 +20,7 @@ async function request(path, { method = "GET", body } = {}) {
     } catch {
       detail = await res.text().catch(() => "");
     }
-    throw new Error(`Erreur ${res.status} sur ${path}${detail ? " : " + detail : ""}`);
+    throw new Error(`Error ${res.status} on ${path}${detail ? ": " + detail : ""}`);
   }
   if (res.status === 204) return null;
   const ct = res.headers.get("content-type") || "";

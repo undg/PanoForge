@@ -1,4 +1,4 @@
-"""Tests de app/core/osv.py — wrapper probe/extract_metadata/extract_thumbnail."""
+"""Tests for app/core/osv.py — probe/extract_metadata/extract_thumbnail wrapper."""
 import os
 import tempfile
 
@@ -9,13 +9,13 @@ from conftest import EXAMPLE_OSV
 
 pytestmark = pytest.mark.skipif(
     not os.path.isfile(EXAMPLE_OSV),
-    reason="fichier d'exemple .OSV absent (carte SD non montée)",
+    reason="sample .OSV file missing (SD card not mounted)",
 )
 
 
 def test_probe_returns_expected_fields():
     info = osv.probe(EXAMPLE_OSV)
-    # fisheyes de l'Osmo 360 : toujours 3840x3840 ; durée/fps dépendent du clip
+    # Osmo 360 fisheyes: always 3840x3840; duration/fps depend on the clip
     assert info.width == 3840
     assert info.height == 3840
     assert info.fps > 0
@@ -45,4 +45,4 @@ def test_extract_thumbnail_creates_jpeg():
         assert result == out_jpg
         assert os.path.getsize(out_jpg) > 0
         with open(out_jpg, "rb") as fp:
-            assert fp.read(2) == b"\xff\xd8"  # signature JPEG
+            assert fp.read(2) == b"\xff\xd8"  # JPEG signature

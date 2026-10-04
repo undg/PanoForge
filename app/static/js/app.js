@@ -1,4 +1,4 @@
-// PanoForge — contrôleur principal du frontend (vanilla JS, sans framework)
+// PanoForge — main frontend controller (vanilla JS, no framework)
 
 import * as api from "/js/api.js";
 import { Viewer360 } from "/js/viewer.js";
@@ -10,19 +10,19 @@ const state = {
   selected: new Set(),
   jobs: [],
   view: "files",
-  optionsInputs: [], // fichiers ciblés par le panneau d'options actuellement ouvert
+  optionsInputs: [], // files targeted by the currently open options panel
   previewJobRef: null, // input path of file used for GPX analyze reference
-  waitingPreviewJobId: null, // job dont on attend le proxy H.264 (preview_url)
-  photoSource: null, // chemin du média source pour l'extraction de photo (OSV/MP4/JPG)
+  waitingPreviewJobId: null, // job whose H.264 proxy (preview_url) we are waiting for
+  photoSource: null, // path of the source media for photo extraction (OSV/MP4/JPG)
 };
 
 let viewer = null;
 
-// ---------- Utilitaires de formatage ----------
+// ---------- Formatting helpers ----------
 
 function formatBytes(bytes) {
   if (bytes == null) return "—";
-  const units = ["o", "Ko", "Mo", "Go", "To"];
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let v = bytes;
   let i = 0;
   while (v >= 1024 && i < units.length - 1) {
@@ -48,11 +48,11 @@ function formatEta(seconds) {
 }
 
 const STATUS_LABELS = {
-  queued: "En attente",
-  running: "En cours",
-  done: "Terminé",
-  error: "Erreur",
-  cancelled: "Annulé",
+  queued: "Queued",
+  running: "Running",
+  done: "Done",
+  error: "Error",
+  cancelled: "Cancelled",
 };
 
 function statusLabel(status) {
@@ -76,7 +76,7 @@ function toast(message, isError = false) {
   }, 4500);
 }
 
-// ---------- Vues ----------
+// ---------- Views ----------
 
 const tabButtons = {
   files: document.getElementById("tab-files"),
@@ -105,7 +105,7 @@ for (const [key, btn] of Object.entries(tabButtons)) {
   btn.addEventListener("click", () => switchView(key));
 }
 
-// ---------- Paramètres (dossiers) ----------
+// ---------- Settings (folders) ----------
 
 const settingsOverlay = document.getElementById("settings-overlay");
 const settingsSourceDir = document.getElementById("settings-source-dir");
@@ -115,7 +115,7 @@ const settingsVersion = document.getElementById("settings-version");
 document.getElementById("settings-btn").addEventListener("click", () => {
   settingsSourceDir.value = state.config.source_dir || "";
   settingsOutputDir.value = state.config.output_dir || "";
-  settingsVersion.textContent = state.config.version ? `Version : ${state.config.version}` : "";
+  settingsVersion.textContent = state.config.version ? `Version: ${state.config.version}` : "";
   settingsOverlay.hidden = false;
 });
 document.getElementById("settings-close").addEventListener("click", () => (settingsOverlay.hidden = true));
@@ -126,7 +126,7 @@ settingsOverlay.addEventListener("click", (e) => {
 
 document.getElementById("settings-source-browse").addEventListener("click", async () => {
   const chosen = await openFileBrowser({
-    title: "Choisir le dossier source (.OSV)",
+    title: "Choose the source folder (.OSV)",
     startDir: settingsSourceDir.value.trim() || null,
   });
   if (chosen) settingsSourceDir.value = chosen;
@@ -134,7 +134,7 @@ document.getElementById("settings-source-browse").addEventListener("click", asyn
 
 document.getElementById("settings-output-browse").addEventListener("click", async () => {
   const chosen = await openFileBrowser({
-    title: "Choisir le dossier de sortie",
+    title: "Choose the output folder",
     startDir: settingsOutputDir.value.trim() || null,
   });
   if (chosen) settingsOutputDir.value = chosen;
@@ -148,7 +148,7 @@ document.getElementById("settings-save").addEventListener("click", async () => {
     };
     state.config = { ...state.config, ...(await api.postConfig(payload)) };
     settingsOverlay.hidden = true;
-    toast("Paramètres enregistrés.");
+    toast("Settings saved.");
     renderSourceDir();
     await loadFiles();
     refreshShortcuts();
@@ -160,10 +160,10 @@ document.getElementById("settings-save").addEventListener("click", async () => {
 function renderGpuStatus() {
   const el = document.getElementById("gpu-status");
   if (state.config.has_nvenc) {
-    el.textContent = "GPU : NVENC disponible";
+    el.textContent = "GPU: NVENC available";
     el.classList.add("ok");
   } else {
-    el.textContent = "GPU : indisponible (CPU)";
+    el.textContent = "GPU: unavailable (CPU)";
     el.classList.remove("ok");
   }
 }
@@ -178,28 +178,28 @@ async function loadConfig() {
   }
 }
 
-// ---------- Dossier source (source de vérité partagée barre Fichiers ↔ Réglages) ----------
+// ---------- Source folder (shared source of truth for Files toolbar ↔ Settings) ----------
 
 const sourceDirPath = document.getElementById("source-dir-path");
 const filesShortcuts = document.getElementById("files-shortcuts");
 
 function renderSourceDir() {
   if (sourceDirPath) {
-    sourceDirPath.textContent = state.config.source_dir || "(aucun dossier source défini)";
+    sourceDirPath.textContent = state.config.source_dir || "(no source folder defined)";
   }
 }
 
-// Rafraîchit le bandeau « Accès rapide » permanent de la vue Fichiers (détection
-// live des supports amovibles / caméra + dossiers source/sortie configurés).
+// Refreshes the permanent "Quick access" bar of the Files view (live
+// detection of removable volumes / camera + configured source/output folders).
 function refreshShortcuts() {
   if (!filesShortcuts) return;
   mountShortcuts(filesShortcuts, (path) => setSourceDir(path));
 }
 
-// Met à jour le dossier source côté serveur (POST /api/config), puis synchronise
-// l'UI et recharge la liste des fichiers. Point d'entrée commun à la barre
-// d'outils Fichiers (Parcourir / raccourci) — le panneau Réglages passe par le
-// même /api/config, donc state.config reste l'unique source de vérité.
+// Updates the source folder server-side (POST /api/config), then syncs
+// the UI and reloads the file list. Common entry point for the Files
+// toolbar (Browse / shortcut) — the Settings panel goes through the
+// same /api/config, so state.config remains the single source of truth.
 async function setSourceDir(path) {
   if (!path || path === state.config.source_dir) {
     if (path === state.config.source_dir) await loadFiles();
@@ -217,13 +217,13 @@ async function setSourceDir(path) {
 
 document.getElementById("source-browse-btn").addEventListener("click", async () => {
   const chosen = await openFileBrowser({
-    title: "Choisir le dossier source (.OSV)",
+    title: "Choose the source folder (.OSV)",
     startDir: state.config.source_dir || null,
   });
   if (chosen) setSourceDir(chosen);
 });
 
-// ---------- Vue Fichiers ----------
+// ---------- Files view ----------
 
 const filesGrid = document.getElementById("files-grid");
 const filesEmpty = document.getElementById("files-empty");
@@ -260,7 +260,7 @@ function renderFiles() {
     selectLabel.className = "file-card-select checkbox-label";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.setAttribute("aria-label", `Sélectionner ${f.name}`);
+    checkbox.setAttribute("aria-label", `Select ${f.name}`);
     checkbox.checked = state.selected.has(f.path);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) state.selected.add(f.path);
@@ -275,11 +275,11 @@ function renderFiles() {
     const thumbBtn = document.createElement("button");
     thumbBtn.type = "button";
     thumbBtn.className = "thumb-preview-btn";
-    thumbBtn.title = "Aperçu 360° de la miniature";
+    thumbBtn.title = "360° preview of the thumbnail";
     const img = document.createElement("img");
     img.loading = "lazy";
     img.src = f.thumb_url || api.thumbUrl(f.path);
-    img.alt = `Miniature équirectangulaire de ${f.name}`;
+    img.alt = `Equirectangular thumbnail of ${f.name}`;
     thumbBtn.appendChild(img);
     thumbBtn.addEventListener("click", () => previewThumb(f));
     card.appendChild(thumbBtn);
@@ -296,19 +296,19 @@ function renderFiles() {
     info.appendChild(name);
     info.appendChild(meta);
 
-    // Deux actions explicites par carte : Convertir (→ options) et Ouvrir en 360°
-    // (→ charge le média dans la visionneuse et bascule sur l'onglet Aperçu).
+    // Two explicit actions per card: Convert (→ options) and Open in 360°
+    // (→ loads the media into the viewer and switches to the Preview tab).
     const actions = document.createElement("div");
     actions.className = "file-card-actions";
     const convBtn = document.createElement("button");
     convBtn.type = "button";
     convBtn.className = "btn primary small";
-    convBtn.textContent = "Convertir";
+    convBtn.textContent = "Convert";
     convBtn.addEventListener("click", () => openOptionsPanel([f.path]));
     const openBtn = document.createElement("button");
     openBtn.type = "button";
     openBtn.className = "btn small";
-    openBtn.textContent = "Ouvrir en 360°";
+    openBtn.textContent = "Open in 360°";
     openBtn.addEventListener("click", () => loadMediaIntoViewer(f.path));
     actions.appendChild(convBtn);
     actions.appendChild(openBtn);
@@ -323,7 +323,7 @@ function renderFiles() {
 
 function updateSelectionUI() {
   const n = state.selected.size;
-  selectionCountEl.textContent = n === 0 ? "Aucun fichier sélectionné" : `${n} fichier${n > 1 ? "s" : ""} sélectionné${n > 1 ? "s" : ""}`;
+  selectionCountEl.textContent = n === 0 ? "No file selected" : `${n} file${n > 1 ? "s" : ""} selected`;
   convertSelectionBtn.disabled = n === 0;
   selectAllCheckbox.checked = state.files.length > 0 && n === state.files.length;
 }
@@ -341,24 +341,24 @@ document.getElementById("refresh-files-btn").addEventListener("click", loadFiles
 
 async function previewThumb(file) {
   switchView("preview");
-  document.getElementById("preview-title").textContent = `Miniature — ${file.name}`;
+  document.getElementById("preview-title").textContent = `Thumbnail — ${file.name}`;
   if (!viewer) {
-    toast("Aperçu 360° indisponible (WebGL requis).", true);
+    toast("360° preview unavailable (WebGL required).", true);
     return;
   }
   setPreviewControlsEnabled({ playPause: false, reset: true });
   hideViewerStatus();
-  state.waitingPreviewJobId = null; // on n'attend plus le proxy d'un job précédent
+  state.waitingPreviewJobId = null; // no longer waiting for a previous job's proxy
   try {
     await viewer.loadImage(file.thumb_url || api.thumbUrl(file.path));
     updatePlayPauseLabel();
-    setPhotoSource(file.path); // extraction depuis l'OSV brut (frame stitchée)
+    setPhotoSource(file.path); // extraction from the raw OSV (stitched frame)
   } catch (err) {
     toast(err.message, true);
   }
 }
 
-// ---------- Panneau Options de conversion ----------
+// ---------- Conversion options panel ----------
 
 const optionsOverlay = document.getElementById("options-overlay");
 const optQuality = document.getElementById("opt-quality");
@@ -379,14 +379,14 @@ const gpxResultEl = document.getElementById("gpx-analyze-result");
 
 convertSelectionBtn.addEventListener("click", () => openOptionsPanel([...state.selected]));
 
-// Ouvre le panneau d'options pour une liste explicite de fichiers. Sans argument,
-// retombe sur la sélection multiple courante (« Convertir la sélection »).
+// Opens the options panel for an explicit list of files. Without an argument,
+// falls back to the current multiple selection ("Convert selection").
 function openOptionsPanel(inputs) {
   const list = Array.isArray(inputs) && inputs.length ? inputs : [...state.selected];
   state.optionsInputs = list;
   const n = list.length;
   document.getElementById("options-selection-summary").textContent =
-    n === 1 ? "1 fichier sélectionné." : `${n} fichiers sélectionnés.`;
+    n === 1 ? "1 file selected." : `${n} files selected.`;
   gpxResultEl.hidden = true;
   gpxResultEl.innerHTML = "";
   updateStabilizeLockState();
@@ -410,7 +410,7 @@ optQuality.addEventListener("input", () => {
 optGpxOffset.addEventListener("input", () => {
   optGpxOffsetValue.textContent = optGpxOffset.value;
 });
-// Ré-analyse uniquement au relâchement du curseur (événement "change")
+// Re-analyze only when the slider is released ("change" event)
 optGpxOffset.addEventListener("change", () => {
   if (optGpxPath.value.trim()) runGpxAnalyze();
 });
@@ -422,8 +422,8 @@ optStreetview.addEventListener("change", () => {
   updateStabilizeLockState();
 });
 
-// La stabilisation est désactivée et verrouillée visuellement tant que le profil
-// Street View est actif (exigence Google : pas de stabilisation pour Street View).
+// Stabilization is disabled and visually locked while the
+// Street View profile is active (Google requirement: no stabilization for Street View).
 function updateStabilizeLockState() {
   const locked = optStreetview.checked;
   optStabilize.disabled = locked;
@@ -453,7 +453,7 @@ function dirnameOf(path) {
 
 document.getElementById("opt-gpx-browse").addEventListener("click", async () => {
   const chosen = await openFileBrowser({
-    title: "Choisir un fichier GPX",
+    title: "Choose a GPX file",
     filter: "gpx",
     startDir: dirnameOf(optGpxPath.value),
   });
@@ -481,11 +481,11 @@ async function runGpxAnalyze() {
   const gpxPath = optGpxPath.value.trim();
   const videoPath = pickReferenceVideoPath();
   if (!gpxPath || !videoPath) {
-    toast("Choisissez un fichier GPX et au moins un fichier vidéo sélectionné.", true);
+    toast("Choose a GPX file and at least one selected video file.", true);
     return;
   }
   gpxResultEl.hidden = false;
-  gpxResultEl.innerHTML = "<p>Analyse en cours…</p>";
+  gpxResultEl.innerHTML = "<p>Analysis in progress…</p>";
   try {
     const result = await api.gpxAnalyze({
       gpx_path: gpxPath,
@@ -511,10 +511,10 @@ function renderGpxResult(result) {
 
   gpxResultEl.innerHTML = "";
   const lines = [
-    ["Couverture", typeof coverage === "number" ? `${coverage.toFixed(1)} %` : "—", coverageClass],
-    ["Chevauchement", typeof overlap === "number" ? `${overlap.toFixed(1)} s` : "—", ""],
-    ["Trous > 5 s", String(gapsCount), gapsClass],
-    ["Points dans la fenêtre", nPoints != null ? String(nPoints) : "—", ""],
+    ["Coverage", typeof coverage === "number" ? `${coverage.toFixed(1)} %` : "—", coverageClass],
+    ["Overlap", typeof overlap === "number" ? `${overlap.toFixed(1)} s` : "—", ""],
+    ["Gaps > 5 s", String(gapsCount), gapsClass],
+    ["Points in window", nPoints != null ? String(nPoints) : "—", ""],
   ];
   for (const [label, value, cls] of lines) {
     const row = document.createElement("div");
@@ -528,13 +528,13 @@ function renderGpxResult(result) {
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
     applyBtn.className = "btn";
-    applyBtn.textContent = `Appliquer (${suggested.toFixed(1)} s)`;
+    applyBtn.textContent = `Apply (${suggested.toFixed(1)} s)`;
     applyBtn.addEventListener("click", () => {
       optGpxOffset.value = String(suggested);
       optGpxOffsetValue.textContent = optGpxOffset.value;
       runGpxAnalyze();
     });
-    row.innerHTML = `<span>Décalage suggéré</span>`;
+    row.innerHTML = `<span>Suggested offset</span>`;
     row.appendChild(applyBtn);
     gpxResultEl.appendChild(row);
   }
@@ -545,7 +545,7 @@ document.getElementById("opt-gpx-analyze").addEventListener("click", runGpxAnaly
 document.getElementById("options-launch").addEventListener("click", async () => {
   const inputs = state.optionsInputs.length ? [...state.optionsInputs] : [...state.selected];
   if (inputs.length === 0) {
-    toast("Aucun fichier sélectionné.", true);
+    toast("No file selected.", true);
     return;
   }
   const gpxPath = optGpxPath.value.trim();
@@ -556,8 +556,8 @@ document.getElementById("options-launch").addEventListener("click", async () => 
     quality: parseInt(optQuality.value, 10),
     interp: document.getElementById("opt-interp").value,
     mode: document.getElementById("opt-mode").value,
-    // La stabilisation reste forcée à false quand le profil Street View est actif
-    // (case décochée + verrouillée par updateStabilizeLockState()).
+    // Stabilization stays forced to false while the Street View profile is active
+    // (checkbox unchecked + locked by updateStabilizeLockState()).
     stabilize: optStreetview.checked ? false : optStabilize.checked,
     stabilize_mode: optStabilizeMode.value,
     stabilize_strength: parseInt(optStabilizeStrength.value, 10) / 100,
@@ -573,7 +573,7 @@ document.getElementById("options-launch").addEventListener("click", async () => 
   }
   try {
     await api.createJobs({ inputs, options });
-    toast(`Conversion lancée pour ${inputs.length} fichier${inputs.length > 1 ? "s" : ""}.`);
+    toast(`Conversion started for ${inputs.length} file${inputs.length > 1 ? "s" : ""}.`);
     closeOptionsPanel();
     state.optionsInputs = [];
     state.selected.clear();
@@ -584,7 +584,7 @@ document.getElementById("options-launch").addEventListener("click", async () => 
   }
 });
 
-// ---------- Vue File d'attente ----------
+// ---------- Queue view ----------
 
 const queueList = document.getElementById("queue-list");
 const queueEmpty = document.getElementById("queue-empty");
@@ -598,7 +598,7 @@ async function refreshJobs() {
   try {
     state.jobs = await api.getJobs();
     renderQueue();
-    // Si on attend le proxy H.264 d'un job (preview_url), relance l'aperçu dès qu'il apparaît.
+    // If we are waiting for a job's H.264 proxy (preview_url), restart the preview as soon as it appears.
     if (state.waitingPreviewJobId) {
       const job = state.jobs.find((j) => j.id === state.waitingPreviewJobId);
       if (job && job.preview_url) {
@@ -609,8 +609,8 @@ async function refreshJobs() {
       }
     }
   } catch (err) {
-    // Silencieux pendant le polling pour ne pas spammer l'utilisateur ; visible seulement
-    // si on est explicitement sur la vue file d'attente.
+    // Silent during polling to avoid spamming the user; visible only
+    // if we are explicitly on the queue view.
     if (state.view === "queue") toast(err.message, true);
   }
 }
@@ -657,7 +657,7 @@ function renderQueue() {
     const label = document.createElement("span");
     label.className = "job-progress-label";
     const pct = Math.round((job.progress || 0) * 100);
-    const fpsTxt = job.fps != null ? `${job.fps.toFixed?.(1) ?? job.fps} im/s` : "— im/s";
+    const fpsTxt = job.fps != null ? `${job.fps.toFixed?.(1) ?? job.fps} fps` : "— fps";
     const etaTxt = `ETA ${formatEta(job.eta_s)}`;
     label.textContent = `${pct}% · ${fpsTxt} · ${etaTxt}`;
     progressWrap.appendChild(progress);
@@ -670,7 +670,7 @@ function renderQueue() {
       const previewBtn = document.createElement("button");
       previewBtn.type = "button";
       previewBtn.className = "btn";
-      previewBtn.textContent = "Aperçu 360°";
+      previewBtn.textContent = "360° preview";
       previewBtn.addEventListener("click", () => previewJobOutput(job));
       actions.appendChild(previewBtn);
     }
@@ -678,7 +678,7 @@ function renderQueue() {
       const cancelBtn = document.createElement("button");
       cancelBtn.type = "button";
       cancelBtn.className = "btn danger";
-      cancelBtn.textContent = "Annuler";
+      cancelBtn.textContent = "Cancel";
       cancelBtn.addEventListener("click", () => cancelJob(job.id));
       actions.appendChild(cancelBtn);
     }
@@ -691,7 +691,7 @@ function renderQueue() {
 async function cancelJob(id) {
   try {
     await api.deleteJob(id);
-    toast("Job annulé.");
+    toast("Job cancelled.");
     await refreshJobs();
   } catch (err) {
     toast(err.message, true);
@@ -710,30 +710,30 @@ function hideViewerStatus() {
 
 async function previewJobOutput(job) {
   switchView("preview");
-  document.getElementById("preview-title").textContent = `Sortie — ${basename(job.output || job.input)}`;
+  document.getElementById("preview-title").textContent = `Output — ${basename(job.output || job.input)}`;
   if (!viewer) {
-    toast("Aperçu 360° indisponible (WebGL requis).", true);
+    toast("360° preview unavailable (WebGL required).", true);
     return;
   }
   setPreviewControlsEnabled({ playPause: true, reset: true });
   hideViewerStatus();
   state.waitingPreviewJobId = null;
 
-  // Le backend fournit un proxy H.264 lisible navigateur (preview_url) quand il est
-  // prêt ; sinon on tente le fichier de sortie directement (peut être du HEVC 10-bit
-  // que Chrome/Linux ne sait pas décoder).
+  // The backend provides a browser-readable H.264 proxy (preview_url) when it is
+  // ready; otherwise we try the output file directly (may be 10-bit HEVC
+  // that Chrome/Linux cannot decode).
   const url = job.preview_url || api.mediaUrl(job.output);
   try {
     await viewer.loadVideo(url);
     updatePlayPauseLabel();
-    setPhotoSource(job.output); // extraction pleine résolution depuis le MP4 converti
+    setPhotoSource(job.output); // full-resolution extraction from the converted MP4
   } catch (err) {
     setPreviewControlsEnabled({ playPause: false, reset: false });
     if (!job.preview_url) {
-      // Sortie non décodable et pas encore de proxy : on attend son apparition
-      // via le polling de /api/jobs.
+      // Output not decodable and no proxy yet: wait for it to appear
+      // via the /api/jobs polling.
       state.waitingPreviewJobId = job.id;
-      showViewerStatus(`${err.message} — préparation de l'aperçu…`);
+      showViewerStatus(`${err.message} — preparing preview…`);
     } else {
       showViewerStatus(err.message);
     }
@@ -741,15 +741,15 @@ async function previewJobOutput(job) {
   }
 }
 
-// Polling 1 s : actif si la vue file d'attente est affichée, si des jobs tournent,
-// ou si on attend le proxy H.264 (preview_url) d'un job terminé.
+// 1 s polling: active if the queue view is displayed, if jobs are running,
+// or if we are waiting for a finished job's H.264 proxy (preview_url).
 setInterval(() => {
   if (state.view === "queue" || hasActiveJobs() || state.waitingPreviewJobId) {
     refreshJobs();
   }
 }, 1000);
 
-// ---------- Vue Aperçu 360° ----------
+// ---------- 360° preview view ----------
 
 const previewPlayPauseBtn = document.getElementById("preview-playpause");
 const previewResetBtn = document.getElementById("preview-reset-view");
@@ -760,7 +760,7 @@ function setPreviewControlsEnabled({ playPause, reset }) {
 }
 
 function updatePlayPauseLabel() {
-  previewPlayPauseBtn.textContent = viewer && !viewer.isPaused ? "Pause" : "Lecture";
+  previewPlayPauseBtn.textContent = viewer && !viewer.isPaused ? "Pause" : "Play";
 }
 
 previewPlayPauseBtn.addEventListener("click", () => {
@@ -770,16 +770,16 @@ previewPlayPauseBtn.addEventListener("click", () => {
 });
 previewResetBtn.addEventListener("click", () => viewer && viewer.resetView());
 
-// ---------- Ouverture d'un fichier dans la visionneuse (depuis la vue Fichiers) ----------
+// ---------- Opening a file in the viewer (from the Files view) ----------
 
-// Charge un média (OSV/MP4/JPEG) dans la visionneuse et bascule sur l'onglet
-// Aperçu. Point d'entrée commun au bouton « Ouvrir un fichier… » de la barre
-// Fichiers et à l'action « Ouvrir en 360° » de chaque carte.
+// Loads a media (OSV/MP4/JPEG) into the viewer and switches to the Preview
+// tab. Common entry point for the "Open a file…" button of the Files
+// toolbar and the "Open in 360°" action of each card.
 async function loadMediaIntoViewer(path) {
   if (!path) return;
   switchView("preview");
   if (!viewer) {
-    toast("Aperçu 360° indisponible (WebGL requis).", true);
+    toast("360° preview unavailable (WebGL required).", true);
     return;
   }
   const ext = path.split(".").pop().toLowerCase();
@@ -794,9 +794,9 @@ async function loadMediaIntoViewer(path) {
       setPreviewControlsEnabled({ playPause: true, reset: true });
       await viewer.loadVideo(api.mediaUrl(path));
     } else {
-      // .OSV : le navigateur ne sait pas le lire → proxy de navigation généré côté backend
+      // .OSV: the browser cannot read it → navigation proxy generated server-side
       setPreviewControlsEnabled({ playPause: false, reset: false });
-      showViewerStatus("Préparation du proxy de navigation…");
+      showViewerStatus("Preparing navigation proxy…");
       const { proxy_url } = await api.photoNavproxy(path);
       await viewer.loadVideo(proxy_url);
       hideViewerStatus();
@@ -813,7 +813,7 @@ async function loadMediaIntoViewer(path) {
 
 document.getElementById("open-file-btn").addEventListener("click", async () => {
   const chosen = await openFileBrowser({
-    title: "Ouvrir un fichier 360°",
+    title: "Open a 360° file",
     filter: "osv,mp4,jpg,jpeg",
     startDir: dirnameOf(state.photoSource) || state.config.source_dir || null,
   });
@@ -821,7 +821,7 @@ document.getElementById("open-file-btn").addEventListener("click", async () => {
   loadMediaIntoViewer(chosen);
 });
 
-// ---------- Panneau « Extraire une photo » ----------
+// ---------- "Extract a photo" panel ----------
 
 const photoPanel = document.getElementById("photo-panel");
 const photoPanelToggle = document.getElementById("photo-panel-toggle");
@@ -860,10 +860,10 @@ const photoRatioWarn = document.getElementById("photo-ratio-warn");
 const viewerProjectionNote = document.getElementById("viewer-projection-note");
 const viewerHelp = document.getElementById("viewer-help");
 
-let syncingFromFields = false; // garde anti-boucle champs ↔ vue
-let syncingFromProjWheel = false; // garde anti-boucle molette (mode projection) ↔ champs
+let syncingFromFields = false; // guard against fields ↔ view loop
+let syncingFromProjWheel = false; // guard against wheel (projection mode) ↔ fields loop
 
-// ---- Ratio (préréglages + « Libre ») ----
+// ---- Ratio (presets + "Custom") ----
 
 function currentRatioParts() {
   if (photoRatio.value === "custom") {
@@ -904,7 +904,7 @@ function photoPanelOpen() {
 }
 
 photoPanelToggle.addEventListener("click", () => {
-  const open = photoPanel.hidden; // état après bascule
+  const open = photoPanel.hidden; // state after toggle
   photoPanel.hidden = !open;
   photoPanelToggle.setAttribute("aria-expanded", String(open));
   if (open) {
@@ -922,24 +922,24 @@ function updateProjectionFields() {
   photoPlanetFields.hidden = p !== "littleplanet";
   photoEquirectNote.hidden = p !== "equirect360";
   if (p === "cylindrical" && viewer) {
-    // Pré-remplit le yaw de départ depuis l'orientation courante de la vue
+    // Pre-fills the start yaw from the current view orientation
     photoCylYaw.value = viewer.yaw.toFixed(1);
   }
   updateCaptureOverlay();
   updateViewerProjection();
 }
 
-const VIEWER_HELP_DEFAULT = "Glisser : orienter · Molette : zoomer · Flèches : orienter · +/- : zoomer";
+const VIEWER_HELP_DEFAULT = "Drag: rotate · Wheel: zoom · Arrows: rotate · +/-: zoom";
 const VIEWER_HELP_BY_PROJECTION = {
-  cylindrical: "Molette : yaw de départ · Glisser/Flèches/+/- : sans effet sur la projection",
-  equirect360: "Projection équirectangulaire intégrale — aucun réglage",
-  littleplanet: "Molette : rotation · Glisser/Flèches/+/- : sans effet sur la projection",
+  cylindrical: "Wheel: start yaw · Drag/Arrows/+/-: no effect on the projection",
+  equirect360: "Full equirectangular projection — no settings",
+  littleplanet: "Wheel: rotation · Drag/Arrows/+/-: no effect on the projection",
 };
 
-// Bascule la vue principale entre la sphère navigable (« flat ») et le rendu plein
-// cadre de la projection choisie (cylindrique / équirect intégral / petite planète),
-// via le mode "projection" fusionné dans viewer.js (ex-projpreview.js). N'est actif
-// que lorsque le panneau « Extraire une photo » est ouvert.
+// Switches the main view between the navigable sphere ("flat") and the full-frame
+// rendering of the chosen projection (cylindrical / full equirect / little planet),
+// via the "projection" mode merged into viewer.js (formerly projpreview.js). Only active
+// when the "Extract a photo" panel is open.
 function updateViewerProjection() {
   const p = photoProjection.value;
   const active = photoPanelOpen() && p !== "flat";
@@ -957,9 +957,9 @@ function updateViewerProjection() {
   });
 }
 
-// Synchro molette (mode projection) → champs numériques : la molette sur la vue
-// principale ajuste yawStart (cylindrique) / rotation (petite planète) au lieu du
-// zoom ; le champ correspondant doit rester synchronisé dans les deux sens.
+// Wheel sync (projection mode) → numeric fields: the wheel on the main view
+// adjusts yawStart (cylindrical) / rotation (little planet) instead of
+// zoom; the matching field must stay synced in both directions.
 function hookViewerProjectionSync() {
   if (!viewer) return;
   viewer.onProjectionParamsChange = (v) => {
@@ -998,7 +998,7 @@ photoCylYaw.addEventListener("input", () => {
   updateViewerProjection();
 });
 
-// Synchro champs → vue (éditer yaw/pitch/roll oriente la visionneuse)
+// Sync fields → view (editing yaw/pitch/roll orients the viewer)
 for (const input of [photoYaw, photoPitch, photoRoll]) {
   input.addEventListener("input", () => {
     if (!viewer) return;
@@ -1012,7 +1012,7 @@ for (const input of [photoYaw, photoPitch, photoRoll]) {
   });
 }
 
-// Synchro vue → champs (bouger la vue met à jour yaw/pitch/roll)
+// Sync view → fields (moving the view updates yaw/pitch/roll)
 function syncFieldsFromView() {
   if (!viewer) return;
   photoYaw.value = viewer.yaw.toFixed(1);
@@ -1028,8 +1028,8 @@ function hookViewerSync() {
   };
 }
 
-// Overlay du cadre de capture : rectangle angulaire (ratio + FOV demandés)
-// projeté dans la vue courante de la visionneuse.
+// Capture frame overlay: angular rectangle (requested ratio + FOV)
+// projected into the viewer's current view.
 function updateCaptureOverlay() {
   const active =
     photoPanelOpen() && photoProjection.value === "flat" && viewer && state.view === "preview";
@@ -1043,13 +1043,13 @@ function updateCaptureOverlay() {
   const deg2rad = (d) => (d * Math.PI) / 180;
   const { rw, rh } = currentRatioParts();
   const hfovReq = parseFloat(photoHfov.value);
-  // v_fov = 2·atan(tan(h_fov/2)·h/w) — même formule que le backend (pas d'étirement)
+  // v_fov = 2·atan(tan(h_fov/2)·h/w) — same formula as the backend (no stretching)
   const vfovReq = (2 * Math.atan(Math.tan(deg2rad(hfovReq) / 2) * (rh / rw)) * 180) / Math.PI;
 
   const hfovView = viewer.hFov;
   const vfovView = viewer.fov;
 
-  // Fraction de l'écran occupée par le cadre (projection perspective, cadre centré)
+  // Fraction of the screen occupied by the frame (perspective projection, centered frame)
   let fx = Math.tan(deg2rad(hfovReq) / 2) / Math.tan(deg2rad(hfovView) / 2);
   let fy = Math.tan(deg2rad(vfovReq) / 2) / Math.tan(deg2rad(vfovView) / 2);
 
@@ -1066,7 +1066,7 @@ function updateCaptureOverlay() {
   captureFrame.style.top = `${Math.round((H - h) / 2)}px`;
 }
 
-// ---- Cadre interactif : glisser l'intérieur = pan de la visée ; poignées = FOV/ratio ----
+// ---- Interactive frame: dragging the inside = panning the aim; handles = FOV/ratio ----
 
 const deg2rad = (d) => (d * Math.PI) / 180;
 const rad2deg = (r) => (r * 180) / Math.PI;
@@ -1074,7 +1074,7 @@ const rad2deg = (r) => (r * 180) / Math.PI;
 let frameDrag = null; // { mode: "pan"|"resize", handle, lastX, lastY }
 
 function hfovFromFraction(fx) {
-  // fraction d'écran → FOV horizontal (projection perspective, cadre centré)
+  // screen fraction → horizontal FOV (perspective projection, centered frame)
   return rad2deg(2 * Math.atan(fx * Math.tan(deg2rad(viewer.hFov) / 2)));
 }
 
@@ -1119,7 +1119,7 @@ captureFrame.addEventListener("pointermove", (e) => {
   const H = rect.height;
 
   if (frameDrag.mode === "pan") {
-    // Déplacer le cadre = déplacer la visée (le cadre reste centré à l'écran)
+    // Moving the frame = moving the aim (the frame stays centered on screen)
     const dx = e.clientX - frameDrag.lastX;
     const dy = e.clientY - frameDrag.lastY;
     frameDrag.lastX = e.clientX;
@@ -1130,7 +1130,7 @@ captureFrame.addEventListener("pointermove", (e) => {
     return;
   }
 
-  // Redimensionnement par poignée : demi-étendues visées depuis le centre du canvas
+  // Handle resize: target half-extents from the center of the canvas
   const cx = rect.left + W / 2;
   const cy = rect.top + H / 2;
   const fx = Math.max(0.02, Math.min(0.995, Math.abs(e.clientX - cx) / (W / 2)));
@@ -1141,7 +1141,7 @@ captureFrame.addEventListener("pointermove", (e) => {
   const { rw, rh } = currentRatioParts();
 
   if (photoRatio.value !== "custom") {
-    // Ratio préréglé : homothétie centrée → seule h_fov change
+    // Preset ratio: centered homothety → only h_fov changes
     let hfov;
     if (horiz && vert) {
       hfov = Math.max(hfovFromFraction(fx), hfovFromVfov(vfovFromFraction(fy), rw, rh));
@@ -1152,13 +1152,13 @@ captureFrame.addEventListener("pointermove", (e) => {
     }
     setHfovClamped(hfov);
   } else {
-    // Ratio libre : largeur et hauteur s'ajustent indépendamment, champs a:b suivis
+    // Custom ratio: width and height adjust independently, a:b fields follow
     let hfov = parseFloat(photoHfov.value);
     let vfov = vfovFromHfov(hfov, rw, rh);
     if (horiz) hfov = Math.max(30, Math.min(140, hfovFromFraction(fx)));
     if (vert) vfov = vfovFromFraction(fy);
     hfov = setHfovClamped(hfov);
-    // rh/rw = tan(v/2)/tan(h/2), borné pour rester dans a/b ∈ [0.2, 8]
+    // rh/rw = tan(v/2)/tan(h/2), bounded to stay within a/b ∈ [0.2, 8]
     let hRatio = (parseFloat(photoRatioW.value) || 16) * (Math.tan(deg2rad(vfov) / 2) / Math.tan(deg2rad(hfov) / 2));
     const w0 = parseFloat(photoRatioW.value) || 16;
     hRatio = Math.max(w0 / 8, Math.min(w0 * 5, hRatio));
@@ -1174,7 +1174,7 @@ const endFrameDrag = () => {
 captureFrame.addEventListener("pointerup", endFrameDrag);
 captureFrame.addEventListener("pointercancel", endFrameDrag);
 
-// Temps courant de la vidéo (affiché dans le panneau)
+// Current video time (shown in the panel)
 setInterval(() => {
   if (!photoPanelOpen()) return;
   const t = viewer ? viewer.currentTime : null;
@@ -1183,7 +1183,7 @@ setInterval(() => {
 
 async function extractPhoto() {
   if (!state.photoSource) {
-    toast("Aucun média source pour l'extraction.", true);
+    toast("No source media for extraction.", true);
     return;
   }
   const projection = photoProjection.value;
@@ -1204,7 +1204,7 @@ async function extractPhoto() {
   };
 
   if (projection === "flat" && !ratioInBounds()) {
-    toast("Ratio hors limites : largeur/hauteur doit rester entre 0,2 et 8.", true);
+    toast("Ratio out of bounds: width/height must stay between 0.2 and 8.", true);
     return;
   }
 
@@ -1229,17 +1229,17 @@ async function extractPhoto() {
 photoExtractBtn.addEventListener("click", extractPhoto);
 photoExtractAgainBtn.addEventListener("click", extractPhoto);
 
-// ---------- Initialisation ----------
+// ---------- Initialization ----------
 
 async function init() {
   const canvas = document.getElementById("viewer-canvas");
   try {
     viewer = new Viewer360(canvas);
   } catch (err) {
-    // WebGL indisponible (pilotes, contexte perdu…) : le reste de l'application
-    // doit continuer à fonctionner, seule la visionneuse est désactivée.
+    // WebGL unavailable (drivers, lost context…): the rest of the application
+    // must keep working, only the viewer is disabled.
     viewer = null;
-    showViewerStatus(`Aperçu 360° indisponible (WebGL requis) : ${err.message}`);
+    showViewerStatus(`360° preview unavailable (WebGL required): ${err.message}`);
   }
   hookViewerSync();
   hookViewerProjectionSync();

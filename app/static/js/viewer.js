@@ -1,10 +1,10 @@
-// PanoForge — visionneuse 360° (three.js vendorisé, sphère UV inversée + VideoTexture)
-// Glisser = orienter la vue, molette = zoom (FOV 30-100°) en mode sphère ; lecture/pause
-// sur <video>. Gère aussi un mode "projection" (cylindrique / équirect intégral /
-// petite planète) : quad plein cadre + shader de reprojection appliqué directement sur
-// la texture équirect courante (repris de l'ancien projpreview.js, fusionné ici pour que
-// la GRANDE vue de la visionneuse affiche la projection choisie, pas seulement un petit
-// aperçu de panneau).
+// PanoForge — 360° viewer (vendored three.js, inverted UV sphere + VideoTexture)
+// Drag = rotate the view, wheel = zoom (FOV 30-100°) in sphere mode; play/pause
+// on <video>. Also handles a "projection" mode (cylindrical / full equirect /
+// little planet): full-frame quad + reprojection shader applied directly on the
+// current equirect texture (taken from the old projpreview.js, merged here so that
+// the viewer's LARGE view displays the chosen projection, not just a small
+// panel preview).
 
 import * as THREE from "/vendor/three.module.js";
 
@@ -13,25 +13,25 @@ const MAX_FOV = 100;
 const DEFAULT_FOV = 75;
 const MAX_LAT = 85;
 
-// ---- Mode "projection" : shader plein cadre (cylindrique / équirect / petite planète) ----
+// ---- "projection" mode: full-frame shader (cylindrical / equirect / little planet) ----
 
 const PROJ_IDS = { cylindrical: 0, equirect360: 1, littleplanet: 2 };
-const PLANET_FOV_DEG = 250; // champ couvert au bord du disque « petite planète »
+const PLANET_FOV_DEG = 250; // field covered at the edge of the "little planet" disc
 
 const PROJ_FRAG = `
 precision highp float;
 uniform sampler2D map;
-uniform int projMode;       // 0 = cylindrique, 1 = equirect, 2 = petite planète
+uniform int projMode;       // 0 = cylindrical, 1 = equirect, 2 = little planet
 uniform float yawStart;     // radians
-uniform float vSpan;        // radians (hauteur verticale cylindrique)
-uniform float rotation;     // radians (petite planète)
-uniform float contentAspect; // largeur/hauteur intrinsèque de la projection
-uniform float canvasAspect;  // largeur/hauteur du canvas (vue principale)
+uniform float vSpan;        // radians (cylindrical vertical height)
+uniform float rotation;     // radians (little planet)
+uniform float contentAspect; // intrinsic width/height of the projection
+uniform float canvasAspect;  // canvas width/height (main view)
 varying vec2 vUv;
 
 const float PI = 3.141592653589793;
 
-// Échantillonne l'équirect à partir d'une direction (lon, lat) en radians.
+// Samples the equirect from a direction (lon, lat) in radians.
 vec4 sampleEquirect(float lon, float lat) {
   float u = fract(lon / (2.0 * PI) + 0.5);
   float v = clamp(lat / PI + 0.5, 0.0, 1.0);
@@ -39,8 +39,8 @@ vec4 sampleEquirect(float lon, float lat) {
 }
 
 void main() {
-  // Rendu "contain" : la projection garde son propre ratio, le canvas (souvent plus
-  // large ou plus étroit) est complété par des bandes noires (letterbox).
+  // "contain" rendering: the projection keeps its own ratio, the canvas (often more
+  // wide or narrower) is padded with black bars (letterbox).
   float scaleX, scaleY;
   if (canvasAspect > contentAspect) {
     scaleY = 1.0;
@@ -56,23 +56,23 @@ void main() {
   }
 
   if (projMode == 1) {
-    // Équirect intégral : recopie 2:1
+    // Full equirect: 2:1 copy
     gl_FragColor = texture2D(map, uv);
     return;
   }
   if (projMode == 0) {
-    // Cylindrique : x = tour complet 360°, y = tan(lat) borné à ±tan(vSpan/2)
+    // Cylindrical: x = full 360° turn, y = tan(lat) bounded to ±tan(vSpan/2)
     float lon = yawStart + (uv.x - 0.5) * 2.0 * PI;
     float t = (uv.y - 0.5) * 2.0 * tan(vSpan * 0.5);
     float lat = atan(t);
     gl_FragColor = sampleEquirect(lon, lat);
     return;
   }
-  // Petite planète : stéréographique depuis le nadir, rotation autour de l'axe vertical
+  // Little planet: stereographic from the nadir, rotation around the vertical axis
   vec2 p = (uv - 0.5) * 2.0; // [-1,1]²
   float r = length(p);
   float halfFov = radians(${(PLANET_FOV_DEG / 2).toFixed(1)});
-  float theta = 2.0 * atan(r * tan(halfFov * 0.5)); // angle depuis le nadir
+  float theta = 2.0 * atan(r * tan(halfFov * 0.5)); // angle from the nadir
   float lat = theta - PI * 0.5;
   float lon = atan(p.y, p.x) + rotation;
   gl_FragColor = sampleEquirect(lon, clamp(lat, -PI * 0.5, PI * 0.5));
@@ -101,19 +101,19 @@ export class Viewer360 {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    // --- Mode "sphere" (projection "flat") : sphère navigable, comportement historique ---
+    // --- "sphere" mode ("flat" projection): navigable sphere, historical behavior ---
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, 0.1, 1000);
 
     const geometry = new THREE.SphereGeometry(500, 60, 40);
-    // Inversion de la sphère (on regarde depuis l'intérieur)
+    // Sphere inversion (we look from the inside)
     geometry.scale(-1, 1, 1);
     this.material = new THREE.MeshBasicMaterial({ color: 0x111318 });
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.scene.add(this.mesh);
 
-    // --- Mode "projection" (cylindrical / equirect360 / littleplanet) : quad plein
-    //     cadre + shader de reprojection, partageant la même texture équirect. ---
+    // --- "projection" mode (cylindrical / equirect360 / littleplanet): full-frame
+    //     quad + reprojection shader, sharing the same equirect texture. ---
     this.projScene = new THREE.Scene();
     this.projCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.projMaterial = new THREE.ShaderMaterial({
@@ -133,7 +133,7 @@ export class Viewer360 {
     });
     this.projScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.projMaterial));
 
-    /** "sphere" (flat, comportement historique) | "projection" (plein cadre) */
+    /** "sphere" (flat, historical behavior) | "projection" (full frame) */
     this.displayMode = "sphere";
     /** null | "cylindrical" | "equirect360" | "littleplanet" */
     this.projection = null;
@@ -144,11 +144,11 @@ export class Viewer360 {
     this.roll = 0;
     this.fov = DEFAULT_FOV;
 
-    /** Callback optionnel appelé à chaque changement d'orientation/zoom
-     *  (glisser, molette, clavier, setOrientation…) : (viewer) => void */
+    /** Optional callback called on every orientation/zoom change
+     *  (drag, wheel, keyboard, setOrientation…): (viewer) => void */
     this.onViewChange = null;
-    /** Callback optionnel appelé quand la molette modifie yawStart/rotation en mode
-     *  "projection" (permet de resynchroniser les champs numériques du panneau) :
+    /** Optional callback called when the wheel changes yawStart/rotation in
+     *  "projection" mode (lets the panel's numeric fields resync):
      *  (viewer) => void */
     this.onProjectionParamsChange = null;
 
@@ -196,15 +196,15 @@ export class Viewer360 {
       (e) => {
         e.preventDefault();
         if (this.displayMode === "projection") {
-          // Sans objet pour ces projections : la molette ajuste le yaw de départ
-          // (cylindrique) ou la rotation (petite planète) au lieu du zoom.
+          // Irrelevant for these projections: the wheel adjusts the start yaw
+          // (cylindrical) or the rotation (little planet) instead of zoom.
           if (this.projection === "cylindrical") {
             this.setProjectionParams({ yawStartDeg: this.projParams.yawStartDeg + e.deltaY * 0.1 });
           } else if (this.projection === "littleplanet") {
             const next = ((this.projParams.rotationDeg + e.deltaY * 0.1) % 360 + 360) % 360;
             this.setProjectionParams({ rotationDeg: next });
           }
-          // equirect360 : aucun réglage orientable, la molette est sans effet.
+          // equirect360: no orientable setting, the wheel has no effect.
           return;
         }
         this.setFov(this.fov + e.deltaY * 0.03);
@@ -263,7 +263,7 @@ export class Viewer360 {
 
   // ---- Mode "projection" (cylindrical / equirect360 / littleplanet) ----
 
-  /** Ratio largeur/hauteur intrinsèque de la projection courante (pour le letterbox). */
+  /** Intrinsic width/height ratio of the current projection (for letterbox). */
   _contentAspect() {
     if (this.projection === "littleplanet") return 1;
     if (this.projection === "equirect360") return 2;
@@ -285,8 +285,8 @@ export class Viewer360 {
   }
 
   /**
-   * Bascule la vue principale entre "sphere" (flat, comportement historique) et
-   * "projection" (cylindrical/equirect360/littleplanet rendus plein cadre).
+   * Switches the main view between "sphere" (flat, historical behavior) and
+   * "projection" (cylindrical/equirect360/littleplanet rendered full frame).
    * @param {"cylindrical"|"equirect360"|"littleplanet"|"flat"|null} projection
    * @param {{yawStartDeg?: number, vSpanDeg?: number, rotationDeg?: number}} params
    */
@@ -301,9 +301,9 @@ export class Viewer360 {
   }
 
   /**
-   * Met à jour les paramètres de la projection courante (yaw de départ, hauteur
-   * verticale cylindrique, rotation petite planète). Utilisé par la synchro
-   * champs → vue et par la molette.
+   * Updates the current projection parameters (start yaw, cylindrical vertical
+   * height, little planet rotation). Used by the fields → view sync
+   * and by the wheel.
    */
   setProjectionParams(partial = {}, { silent = false } = {}) {
     Object.assign(this.projParams, partial);
@@ -327,7 +327,7 @@ export class Viewer360 {
     this.setFov(DEFAULT_FOV);
   }
 
-  /** Yaw courant normalisé dans [-180, 180]. */
+  /** Current yaw normalized to [-180, 180]. */
   get yaw() {
     let y = this.lon % 360;
     if (y > 180) y -= 360;
@@ -335,12 +335,12 @@ export class Viewer360 {
     return y;
   }
 
-  /** Pitch courant en degrés (positif = vers le haut). */
+  /** Current pitch in degrees (positive = upward). */
   get pitch() {
     return this.lat;
   }
 
-  /** Oriente la vue (utilisé par la synchro champs → vue du panneau photo). */
+  /** Orients the view (used by the photo panel's fields → view sync). */
   setOrientation(yawDeg, pitchDeg, rollDeg) {
     if (yawDeg != null && !Number.isNaN(yawDeg)) this.lon = yawDeg;
     if (pitchDeg != null && !Number.isNaN(pitchDeg))
@@ -349,12 +349,12 @@ export class Viewer360 {
     this._emitViewChange();
   }
 
-  /** Temps courant de la vidéo en secondes (null si aucune vidéo). */
+  /** Current video time in seconds (null if no video). */
   get currentTime() {
     return this.videoEl ? this.videoEl.currentTime : null;
   }
 
-  /** FOV horizontal courant de la vue, en degrés. */
+  /** Current horizontal FOV of the view, in degrees. */
   get hFov() {
     const vfovRad = (this.fov * Math.PI) / 180;
     return (2 * Math.atan(Math.tan(vfovRad / 2) * this.camera.aspect) * 180) / Math.PI;
@@ -371,14 +371,14 @@ export class Viewer360 {
       this.texture.dispose();
       this.texture = null;
     }
-    // Ne pas laisser la sphère pointer vers une texture disposée (canvas noir/corrompu)
+    // Do not leave the sphere pointing to a disposed texture (black/corrupt canvas)
     this.material.map = null;
     this.material.color.set(0x111318);
     this.material.needsUpdate = true;
   }
 
   /**
-   * Charge une vidéo (sortie convertie ou fichier source servi par /api/media).
+   * Loads a video (converted output or source file served by /api/media).
    * @param {string} url
    * @returns {Promise<void>}
    */
@@ -396,14 +396,14 @@ export class Viewer360 {
     return new Promise((resolve, reject) => {
       const onReady = () => {
         video.removeEventListener("loadeddata", onReady);
-        // Chrome/Linux : sur un HEVC 10-bit non décodable, 'loadeddata' se déclenche
-        // quand même mais videoWidth vaut 0 → il ne faut pas laisser un canvas noir.
+        // Chrome/Linux: on undecodable 10-bit HEVC, 'loadeddata' still fires
+        // but videoWidth is 0 → we must not leave a black canvas.
         if (!video.videoWidth || !video.videoHeight) {
           this._clearMedia();
           reject(
             new Error(
-              "Le navigateur ne peut pas décoder cette vidéo (HEVC). " +
-                "L'aperçu H.264 est en cours de préparation ou utilisez un export H.264."
+              "The browser cannot decode this video (HEVC). " +
+                "The H.264 preview is being prepared or use an H.264 export."
             )
           );
           return;
@@ -421,15 +421,15 @@ export class Viewer360 {
       video.addEventListener(
         "error",
         () => {
-          // MEDIA_ERR_DECODE (3) / MEDIA_ERR_SRC_NOT_SUPPORTED (4) = codec non pris en
-          // charge (typiquement HEVC 10-bit sous Chrome/Linux) → même message clair
-          // que pour le cas loadeddata + videoWidth=0.
+          // MEDIA_ERR_DECODE (3) / MEDIA_ERR_SRC_NOT_SUPPORTED (4) = unsupported
+          // codec (typically 10-bit HEVC under Chrome/Linux) → same clear message
+          // as for the loadeddata + videoWidth=0 case.
           const code = video.error ? video.error.code : 0;
           const msg =
             code === 3 || code === 4
-              ? "Le navigateur ne peut pas décoder cette vidéo (HEVC). " +
-                "L'aperçu H.264 est en cours de préparation ou utilisez un export H.264."
-              : "Impossible de charger la vidéo pour l'aperçu 360°.";
+              ? "The browser cannot decode this video (HEVC). " +
+                "The H.264 preview is being prepared or use an H.264 export."
+              : "Cannot load the video for the 360° preview.";
           reject(new Error(msg));
         },
         { once: true }
@@ -438,7 +438,7 @@ export class Viewer360 {
   }
 
   /**
-   * Charge une image statique (ex : miniature équirectangulaire embarquée).
+   * Loads a static image (e.g. embedded equirectangular thumbnail).
    * @param {string} url
    * @returns {Promise<void>}
    */
@@ -458,7 +458,7 @@ export class Viewer360 {
           resolve();
         },
         undefined,
-        () => reject(new Error("Impossible de charger l'image d'aperçu."))
+        () => reject(new Error("Cannot load the preview image."))
       );
     });
   }
@@ -484,8 +484,8 @@ export class Viewer360 {
   _animate() {
     this._raf = requestAnimationFrame(this._animate);
     if (this.texture && this.mode === "video") {
-      // Marche aussi en mode "projection" : la texture vidéo doit être rafraîchie
-      // dans les deux modes.
+      // Also works in "projection" mode: the video texture must be refreshed
+      // in both modes.
       this.texture.needsUpdate = true;
     }
 
@@ -504,7 +504,7 @@ export class Viewer360 {
     );
     this.camera.lookAt(target);
     if (this.roll) {
-      // Roulis autour de l'axe de visée (synchro avec le champ « roll » du panneau photo)
+      // Roll around the view axis (synced with the "roll" field of the photo panel)
       this.camera.rotateZ((-this.roll * Math.PI) / 180);
     }
     this.renderer.render(this.scene, this.camera);

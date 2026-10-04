@@ -1,35 +1,35 @@
-"""Génération des cartes `remap` ffmpeg depuis la calibration usine DJI Osmo 360.
+"""Generation of ffmpeg `remap` maps from the DJI Osmo 360 factory calibration.
 
-Produit, pour chaque objectif, une paire xmap/ymap en PGM 16 bits (consommée par
-le filtre ffmpeg ``remap``) qui projette le fisheye source vers l'équirectangulaire
-de sortie, ainsi qu'un masque de fusion (PGM 8 bits, dégradé doux ±5° autour des
-coutures) pour ``maskedmerge``.
+Produces, for each lens, an xmap/ymap pair in 16-bit PGM (consumed by the
+ffmpeg ``remap`` filter) that projects the source fisheye to the output
+equirectangular, as well as a blending mask (8-bit PGM, soft gradient ±5° around
+the seams) for ``maskedmerge``.
 
-Interprétation de la calibration embarquée (validée empiriquement contre la
-miniature équirectangulaire stitchée par la caméra — voir work/engine/) :
+Interpretation of the embedded calibration (validated empirically against the
+equirectangular thumbnail stitched by the camera — see work/engine/):
 
-- ``extrinsic_quat`` = quaternion ``[w, x, y, z]`` tel que ``v_objectif = R(q)·v_boîtier``.
-  Repère boîtier : X à droite, Y vers l'avant, Z vers le haut. Repère objectif :
-  X = x image, Y = y image (vers le bas), Z = axe optique sortant.
-  Les deux objectifs sont bien reliés par ~180° autour de Z (avant/arrière).
-- Les flux vidéo 0:0 et 0:1 correspondent à ``lenses[0]`` (yaw≈-180°, dos) et
-  ``lenses[1]`` (yaw≈0°, face) respectivement.
-- Projection fisheye : r(θ) = s·fx·g(θ) avec g(θ) = θ + k1·θ³ + k2·θ⁵ + k3·θ⁷ + k4·θ⁹
-  (modèle type OpenCV-fisheye, coefficients ``dist``). Ce polynôme n'est PAS
-  monotone au-delà de ~88° : on le prolonge linéairement (tangente) au-delà de
+- ``extrinsic_quat`` = quaternion ``[w, x, y, z]`` such that ``v_lens = R(q)·v_body``.
+  Body frame: X right, Y forward, Z up. Lens frame:
+  X = image x, Y = image y (downward), Z = outgoing optical axis.
+  The two lenses are indeed related by ~180° around Z (front/back).
+- Video streams 0:0 and 0:1 correspond to ``lenses[0]`` (yaw≈-180°, back) and
+  ``lenses[1]`` (yaw≈0°, front) respectively.
+- Fisheye projection: r(θ) = s·fx·g(θ) with g(θ) = θ + k1·θ³ + k2·θ⁵ + k3·θ⁷ + k4·θ⁹
+  (OpenCV-fisheye-like model, ``dist`` coefficients). This polynomial is NOT
+  monotonic beyond ~88°: it is extended linearly (tangent) beyond
   THETA_LIN = 85°.
-- Les deux « LUT radiales » ne sont pas une courbe angle→rayon : les couples
-  ``(radial_lut_1[i], radial_lut_2[i])``, i=1..13, décrivent un CERCLE de rayon
-  ≈1815–1860 px autour de (cx, cy) — le cercle de couture à θ=90°, échantillonné
-  aux azimuts 30°..150° par pas de 10°. Le polynôme brut sous-estime ce rayon
-  d'environ 11 % ; l'échelle par objectif est donc recalée dessus :
-  s = rayon_moyen_LUT / (fx·g_ext(π/2)). Avec ce recalage le rendu colle à la
-  miniature caméra (optimum empirique s≈1.115, valeur dérivée s≈1.115 aussi).
-- Le décalage de +90° de longitude (YAW_OFFSET_DEG) aligne la sortie sur la
-  baseline v360 (``yaw=90``) et sur la miniature embarquée.
+- The two "radial LUTs" are not an angle→radius curve: the pairs
+  ``(radial_lut_1[i], radial_lut_2[i])``, i=1..13, describe a CIRCLE of radius
+  ≈1815–1860 px around (cx, cy) — the seam circle at θ=90°, sampled
+  at azimuths 30°..150° in 10° steps. The raw polynomial underestimates this
+  radius by about 11%; the per-lens scale is therefore recalibrated on it:
+  s = mean_LUT_radius / (fx·g_ext(π/2)). With this recalibration the render sticks
+  to the camera thumbnail (empirical optimum s≈1.115, derived value s≈1.115 too).
+- The +90° longitude offset (YAW_OFFSET_DEG) aligns the output with the
+  v360 baseline (``yaw=90``) and with the embedded thumbnail.
 
-Fallback ``calibration=None`` : géométrie dfisheye idéale (équidistant, FOV 190°,
-centres au milieu de l'image), équivalent nearest du mode v360.
+Fallback ``calibration=None``: ideal dfisheye geometry (equidistant, FOV 190°,
+centers at the middle of the image), nearest equivalent of the v360 mode.
 """
 
 from __future__ import annotations
@@ -39,34 +39,34 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# Champ couvert par objectif retenu pour les cartes (au-delà : invalide/noir).
+# Field covered per lens retained for the maps (beyond: invalid/black).
 FOV_HALF_DEG = 96.0
-# Demi-bande de fusion autour de la couture à 90° (bande totale = 10°).
+# Half-band of blending around the seam at 90° (total band = 10°).
 FADE_HALF_DEG = 5.0
-# Angle au-delà duquel le polynôme de distorsion est prolongé linéairement.
+# Angle beyond which the distortion polynomial is extended linearly.
 THETA_LIN_DEG = 85.0
-# Alignement en longitude sur la baseline v360 (yaw=90) et la miniature caméra.
+# Longitude alignment on the v360 baseline (yaw=90) and the camera thumbnail.
 YAW_OFFSET_DEG = 90.0
-# Valeur "hors champ" des cartes remap (>= dimensions source => pixel noir).
+# "Out of field" value of the remap maps (>= source dimensions => black pixel).
 INVALID = 65535
-# Lignes traitées par tranche (limite la mémoire à ~8k de large).
+# Rows processed per chunk (limits memory to ~8k wide).
 CHUNK_ROWS = 256
 
 
 @dataclass
 class MapSet:
-    """Cartes remap + masque de fusion pour une paire de fisheyes."""
+    """Remap maps + blending mask for a pair of fisheyes."""
 
     out_w: int
     out_h: int
-    xmaps: list[str] = field(default_factory=list)  # [objectif0(dos), objectif1(face)]
+    xmaps: list[str] = field(default_factory=list)  # [lens0(back), lens1(front)]
     ymaps: list[str] = field(default_factory=list)
-    blend_mask: str = ""   # PGM gris : poids de l'objectif 1 (face) pour maskedmerge
-    calibrated: bool = False  # False = fallback géométrie idéale (préférer v360)
+    blend_mask: str = ""   # gray PGM: weight of lens 1 (front) for maskedmerge
+    calibrated: bool = False  # False = ideal-geometry fallback (prefer v360)
 
 
 def _quat_to_rot(q: list[float]) -> np.ndarray:
-    """Quaternion [w,x,y,z] -> matrice 3x3 telle que v' = R·v."""
+    """Quaternion [w,x,y,z] -> 3x3 matrix such that v' = R·v."""
     w, x, y, z = q
     n = (w * w + x * x + y * y + z * z) ** 0.5
     w, x, y, z = w / n, x / n, y / n, z / n
@@ -78,10 +78,10 @@ def _quat_to_rot(q: list[float]) -> np.ndarray:
 
 
 def _radial_model(lens: dict):
-    """Retourne r(θ) en pixels pour un objectif calibré.
+    """Return r(θ) in pixels for a calibrated lens.
 
-    Polynôme impair OpenCV-fisheye prolongé linéairement au-delà de THETA_LIN_DEG,
-    recalé en échelle sur le cercle de couture décrit par les LUT radiales.
+    OpenCV-fisheye odd polynomial extended linearly beyond THETA_LIN_DEG,
+    rescaled on the seam circle described by the radial LUTs.
     """
     fx = float(lens["fx"])
     k1, k2, k3, k4 = (float(k) for k in lens["dist"])
@@ -98,7 +98,7 @@ def _radial_model(lens: dict):
     def g_ext(t):
         return np.where(t <= t0, g(t), g0 + gp0 * (t - t0))
 
-    # Échelle : cercle de couture LUT (rayon moyen autour de (cx,cy)) = r(90°).
+    # Scale: LUT seam circle (mean radius around (cx,cy)) = r(90°).
     scale = 1.0
     lut1, lut2 = lens.get("radial_lut_1"), lens.get("radial_lut_2")
     if lut1 and lut2 and len(lut1) >= 14 and len(lut2) >= 14:
@@ -112,16 +112,16 @@ def _radial_model(lens: dict):
 
 
 def _ideal_lenses(src_w: float = 3840.0, src_h: float = 3840.0) -> list[dict]:
-    """Fallback sans calibration : dfisheye idéal équidistant, FOV 190°."""
-    # cercle image ~3735/3840 de la largeur (mesuré sur l'Osmo 360)
+    """Fallback without calibration: ideal equidistant dfisheye, FOV 190°."""
+    # image circle ~3735/3840 of the width (measured on the Osmo 360)
     r95 = 0.5 * min(src_w, src_h) * (3735.0 / 3840.0)
     lenses = []
-    for qz in ((0.0, 1.0), (1.0, 0.0)):  # dos: 180° puis face: 0° autour de Z
-        # quaternion [w,x,y,z] : rotation boîtier->objectif = R_x(90°) (face)
-        # ou R_z(180°)·R_x(90°) (dos)
-        if qz[1] == 0.0:  # face : rotation +90° autour de X
+    for qz in ((0.0, 1.0), (1.0, 0.0)):  # back: 180° then front: 0° around Z
+        # quaternion [w,x,y,z]: body->lens rotation = R_x(90°) (front)
+        # or R_z(180°)·R_x(90°) (back)
+        if qz[1] == 0.0:  # front: +90° rotation around X
             quat = [np.cos(np.pi / 4), np.sin(np.pi / 4), 0.0, 0.0]
-        else:  # dos : 180° autour de l'axe (0, -√2/2, √2/2)
+        else:  # back: 180° around axis (0, -√2/2, √2/2)
             quat = [0.0, 0.0, -np.sin(np.pi / 4), np.cos(np.pi / 4)]
         lenses.append({
             "fx": r95 / np.radians(95.0), "fy": r95 / np.radians(95.0),
@@ -144,10 +144,10 @@ def _write_pgm(path: str, data: np.ndarray, maxval: int) -> None:
 
 def generate_remap_maps(calibration: dict | None, out_w: int, out_h: int,
                         workdir: str) -> MapSet:
-    """Génère xmap/ymap 16 bits par objectif + masque de fusion, en PGM.
+    """Generate 16-bit xmap/ymap per lens + blending mask, in PGM.
 
-    ``calibration`` : contenu de calibration.json (clé "lenses") ou None
-    (fallback géométrie idéale). Sortie équirectangulaire ``out_w`` x ``out_h``.
+    ``calibration``: contents of calibration.json ("lenses" key) or None
+    (ideal-geometry fallback). Equirectangular output ``out_w`` x ``out_h``.
     """
     os.makedirs(workdir, exist_ok=True)
     calibrated = bool(calibration and calibration.get("lenses"))
@@ -180,7 +180,7 @@ def generate_remap_maps(calibration: dict | None, out_w: int, out_h: int,
         y1 = min(y0 + CHUNK_ROWS, out_h)
         lat = np.pi / 2 - (np.arange(y0, y1) + 0.5) / out_h * np.pi
         cl, sl = np.cos(lat)[:, None], np.sin(lat)[:, None]
-        # direction monde (repère boîtier) : X droite, Y avant, Z haut
+        # world direction (body frame): X right, Y forward, Z up
         d = np.stack([cl * np.sin(lon)[None, :],
                       cl * np.cos(lon)[None, :],
                       np.broadcast_to(sl, (y1 - y0, out_w))], axis=-1).astype(np.float32)

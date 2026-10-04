@@ -1,91 +1,92 @@
-# CLAUDE.md — repères pour travailler sur PanoForge
+# CLAUDE.md — guide for working on PanoForge
 
-Guide condensé pour un agent Claude Code intervenant sur ce dépôt. Voir `SPEC.md` pour
-le contrat détaillé (modules, API, formats binaires) ; ce fichier résume l'essentiel et
-surtout les **pièges** découverts empiriquement.
+Condensed guide for a Claude Code agent working on this repository. See `SPEC.md` for
+the detailed contract (modules, API, binary formats); this file summarizes the essentials and
+above all the **pitfalls** discovered empirically.
 
-## Quoi
+## What
 
-Appli web **locale** (FastAPI + frontend vanilla JS/three.js, interface en **français**)
-qui convertit les fichiers `.OSV` de la DJI Osmo 360 en MP4 360° équirectangulaire, avec
-stabilisation, métadonnées sphériques, GPS depuis GPX (CAMM), et extraction de photos.
-Serveur sur `127.0.0.1:8360`, mono-utilisateur, sans authentification.
+**Local** web app (FastAPI + vanilla JS/three.js frontend, **English** interface)
+that converts `.OSV` files from the DJI Osmo 360 to equirectangular 360° MP4, with
+stabilization, spherical metadata, GPS from GPX (CAMM), and photo extraction.
+Server on `127.0.0.1:8360`, single-user, no authentication.
 
-> Nommage : le produit s'appelle **PanoForge**. « DJI »/« Osmo » ne doivent apparaître
-> que comme mentions de compatibilité (format `.OSV`, caméra source), jamais dans le nom
-> du produit, du dépôt ou le logo. Projet indépendant, non affilié à DJI.
+> Naming: the product is called **PanoForge**. "DJI"/"Osmo" must appear
+> only as compatibility mentions (`.OSV` format, source camera), never in the
+> product, repository, or logo name. Independent project, not affiliated with DJI.
 
-## Lancer / tester
+## Run / test
 
 ```bash
-./run.sh                      # venv + deps (conditionnel) + uvicorn + navigateur
-.venv/bin/pytest              # suite complète (~106 tests)
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8360   # manuel
+./run.sh                      # venv + deps (conditional) + uvicorn + browser
+.venv/bin/pytest              # full suite (~106 tests)
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8360   # manual
 ```
 
-- `run.sh` saute l'install si `import fastapi, uvicorn, numpy` réussit ; forcer avec
+- `run.sh` skips the install if `import fastapi, uvicorn, numpy` succeeds; force with
   `PANOFORGE_FORCE_INSTALL=1`.
-- Certains tests d'intégration exigent un `.OSV`/`.JPG` réel ; ils se **skip** si absent
-  (surchargeables via `PANOFORGE_TEST_DCIM` / `PANOFORGE_TEST_SAMPLES`).
-- **Ne pas** démarrer un 2e serveur sur 8360 s'il en tourne déjà un ; utiliser un autre
-  port pour les tests navigateur.
+- Some integration tests require a real `.OSV`/`.JPG`; they **skip** if absent
+  (overridable via `PANOFORGE_TEST_DCIM` / `PANOFORGE_TEST_SAMPLES`).
+- **Do not** start a 2nd server on 8360 if one is already running; use another
+  port for browser tests.
 
 ## Architecture
 
 ```
-app/main.py      # app FastAPI + montage statique
-app/api.py       # routes REST (voir SPEC.md)
-app/jobs.py      # file d'attente FIFO, 1 ffmpeg à la fois, parsing -progress
-app/config.py    # config persistée ~/.config/panoforge, cache ~/.cache/panoforge
+app/main.py      # FastAPI app + static mount
+app/api.py       # REST routes (see SPEC.md)
+app/jobs.py      # FIFO queue, 1 ffmpeg at a time, -progress parsing
+app/config.py    # persisted config ~/.config/panoforge, cache ~/.cache/panoforge
 app/core/
-  osv.py         # probe ffprobe + wrapper extraction métadonnées
-  osv_meta/      # extraction bas niveau des pistes djmd (protobuf) — NE PAS réécrire
-  maps.py        # calibration -> cartes de remap ffmpeg + masque de fusion
-  stitch.py      # construction des commandes ffmpeg (modes v360 / calibrated)
-  stabilize.py   # corrections d'orientation par frame (quaternions IMU -> sendcmd)
-  gpx.py camm.py spherical.py   # GPS/GPX -> CAMM, métadonnées sphériques V1+V2
-  photo.py       # extraction de photos (4 projections) + navproxy
-app/static/      # frontend : index.html, js/{app,viewer,filebrowser,api}.js, style.css
+  osv.py         # ffprobe probe + metadata extraction wrapper
+  osv_meta/      # low-level djmd track extraction (protobuf) — DO NOT rewrite
+  maps.py        # calibration -> ffmpeg remap maps + blending mask
+  stitch.py      # ffmpeg command building (v360 / calibrated modes)
+  stabilize.py   # per-frame orientation corrections (IMU quaternions -> sendcmd)
+  gpx.py camm.py spherical.py   # GPS/GPX -> CAMM, V1+V2 spherical metadata
+  photo.py       # photo extraction (4 projections) + navproxy
+app/static/      # frontend: index.html, js/{app,viewer,filebrowser,api}.js, style.css
 ```
 
-Les modules `core` ont des **signatures contractuelles** (SPEC.md) ; `jobs.py` les
-importe paresseusement et transforme toute erreur en job `error` explicite, sans planter.
+The `core` modules have **contractual signatures** (SPEC.md); `jobs.py` imports them
+lazily and turns any error into an explicit `error` job, without crashing.
 
-## Faits établis (ne pas re-vérifier)
+## Established facts (do not re-verify)
 
-- `.OSV` = MP4 : 2 fisheyes HEVC 10 bits 3840×3840 (>180°), audio AAC, pistes `djmd`
-  (protobuf DJI), et une miniature équirect MJPEG (référence de stitching).
-- La **calibration optique usine** (fx/fy, cx/cy, distorsion, quaternion extrinsèque,
-  LUT de couture) est embarquée dans le 1er échantillon `djmd` de chaque fichier.
-- La caméra n'a **pas de GPS** : le GPX externe est la seule source géo.
-- IMU : quaternions d'orientation ~1 kHz (pas de gyro brut) — suffisant pour stabiliser.
+- `.OSV` = MP4: 2 fisheye HEVC 10-bit 3840×3840 (>180°), AAC audio, `djmd` tracks
+  (DJI protobuf), and an equirect MJPEG thumbnail (stitching reference).
+- The **factory optical calibration** (fx/fy, cx/cy, distortion, extrinsic quaternion,
+  stitching LUT) is embedded in the 1st `djmd` sample of each file.
+- The camera has **no GPS**: the external GPX is the only geo source.
+- IMU: ~1 kHz orientation quaternions (no raw gyro) — enough to stabilize.
 
-## Pièges à connaître (chèrement acquis)
+## Pitfalls to know (hard-won)
 
-1. **v360 + sendcmd composent, ne remplacent pas.** Les commandes `yaw/pitch/roll`
-   envoyées à un filtre `v360` se **post-multiplient** avec l'orientation courante. Pour
-   une stabilisation par frame il faut émettre des **deltas** (`C_i = T_{i-1}ᵀ·T_i`) et
-   initialiser le v360 en neutre, sinon dérive cumulative croissante. Voir `stabilize.py`.
-2. **Conventions d'angles visionneuse ↔ v360.** La sphère three.js échantillonne
-   `u = yaw/360` (yaw=0 → bord gauche) ; `v360 output=flat` vise le centre. Mapping
-   appliqué dans `photo.py` : flat `yaw_v360 = yaw+180`, roll inversé, pitch identique ;
-   cylindrical yaw inchangé ; littleplanet rotation+90, +hflip, `h_fov=250` fixe. Le
-   frontend WebGL est la référence, le backend s'y aligne.
-3. **HEVC 10 bits non lisible par Chrome/Linux.** Chaque job et l'extraction OSV génèrent
-   un **proxy H.264** (`~/.cache/panoforge/previews/`) que lit l'aperçu 360°.
-4. **Quaternion djmd = ordre `[w,x,y,z]`, repère boîtier→monde, vertical monde = −Z.**
-   Validé empiriquement ; convention documentée en tête de `stabilize.py`.
-5. **Stitching calibré** : les LUT embarquées décrivent le cercle de couture (θ=90°) et
-   servent à recaler l'échelle optique — meilleures coutures que le polynôme seul.
-6. Config/cache ont été renommés depuis `osmo360-studio` → `panoforge` avec **migration
-   douce** au démarrage (`config._migrate_legacy_dirs`) ; ne pas casser cette migration.
+1. **v360 + sendcmd compose, they do not replace.** The `yaw/pitch/roll`
+   commands sent to a `v360` filter are **post-multiplied** with the current
+   orientation. For per-frame stabilization you must emit **deltas**
+   (`C_i = T_{i-1}ᵀ·T_i`) and initialize v360 to neutral, otherwise growing
+   cumulative drift. See `stabilize.py`.
+2. **Viewer ↔ v360 angle conventions.** The three.js sphere samples
+   `u = yaw/360` (yaw=0 → left edge); `v360 output=flat` aims at the center. Mapping
+   applied in `photo.py`: flat `yaw_v360 = yaw+180`, roll inverted, pitch identical;
+   cylindrical yaw unchanged; littleplanet rotation+90, +hflip, fixed `h_fov=250`. The
+   WebGL frontend is the reference, the backend aligns to it.
+3. **HEVC 10-bit not readable by Chrome/Linux.** Each job and the OSV extraction generate
+   an **H.264 proxy** (`~/.cache/panoforge/previews/`) that the 360° preview reads.
+4. **djmd quaternion = order `[w,x,y,z]`, body→world frame, world vertical = −Z.**
+   Validated empirically; convention documented at the top of `stabilize.py`.
+5. **Calibrated stitching**: the embedded LUTs describe the stitching circle (θ=90°) and
+   serve to realign the optical scale — better seams than the polynomial alone.
+6. Config/cache were renamed from `osmo360-studio` → `panoforge` with **soft migration**
+   at startup (`config._migrate_legacy_dirs`); do not break this migration.
 
 ## Conventions
 
-- Interface et messages utilisateur en **français**. Pas de dépendance CDN à l'exécution
-  (three.js est vendorisé dans `app/static/js/`).
-- Ajouter/mettre à jour un test pytest pour tout changement de comportement ; garder la
-  suite verte. Vérifier visuellement les changements d'UI dans un navigateur avant de
-  conclure (ne pas se fier au seul code).
-- `work/` (gitignoré) contient des artefacts de travail et images personnelles : ne pas
-  le committer.
+- Interface and user messages in **English**. No CDN dependency at runtime
+  (three.js is vendored in `app/static/js/`).
+- Add/update a pytest test for any behavior change; keep the
+  suite green. Visually verify UI changes in a browser before
+  concluding (do not trust the code alone).
+- `work/` (gitignored) contains work artifacts and personal images: do not
+  commit it.

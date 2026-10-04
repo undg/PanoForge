@@ -1,21 +1,20 @@
-"""Injection des métadonnées vidéo sphériques V1 (boîte ``uuid`` XML GSpherical)
-et V2 (``sv3d``/``proj``/``equi``) dans la piste vidéo d'un MP4, sans dépendance
-externe (cf. google/spatial-media : docs/spherical-video-rfc.md et
-spherical-video-v2-rfc.md pour le layout binaire).
+"""Injection of spherical video metadata V1 (``uuid`` box with GSpherical XML)
+and V2 (``sv3d``/``proj``/``equi``) into the video track of an MP4, without
+external dependency (see google/spatial-media: docs/spherical-video-rfc.md and
+spherical-video-v2-rfc.md for the binary layout).
 
-Placement (d'après les RFC) :
-  - V1 : boîte ``uuid`` (extended type ``ffcc8263-f855-4a93-8814-587a02521fdd``,
-    contenu = XML UTF-8) ajoutée comme **dernier enfant du ``trak`` vidéo**
-    (pas au niveau racine du fichier).
-  - V2 : boîte ``sv3d`` (contenant ``svhd`` + ``proj``{``prhd``+``equi``})
-    ajoutée comme **dernier enfant de l'entrée d'échantillon vidéo** (dans
-    ``stsd``, après les boîtes habituelles type ``hvcC``/``avcC``/``colr``).
+Placement (per the RFCs):
+  - V1: ``uuid`` box (extended type ``ffcc8263-f855-4a93-8814-587a02521fdd``,
+    content = UTF-8 XML) added as the **last child of the video ``trak``**
+    (not at the file root level).
+  - V2: ``sv3d`` box (containing ``svhd`` + ``proj``{``prhd``+``equi``})
+    added as the **last child of the video sample entry** (in
+    ``stsd``, after the usual boxes such as ``hvcC``/``avcC``/``colr``).
 
-Comme pour camm.py : ``moov`` est d'abord extrait de sa position d'origine et
-réécrit en fin de fichier (les décalages stco/co64 des pistes existantes sont
-corrigés en conséquence), ce qui permet ensuite de faire grossir ``moov``
-librement (insertions ci-dessus) sans jamais retoucher aux données des pistes
-existantes.
+As for camm.py: ``moov`` is first extracted from its original position and
+rewritten at the end of the file (the stco/co64 offsets of existing tracks are
+corrected accordingly), which then allows ``moov`` to grow freely (insertions
+above) without ever touching the data of existing tracks.
 """
 from __future__ import annotations
 
@@ -43,16 +42,16 @@ _VIDEO_SAMPLE_ENTRY_TYPES = {
 
 
 class SphericalError(Exception):
-    """Erreur explicite lors du parsing/réécriture MP4 pour les métadonnées sphériques."""
+    """Explicit error during MP4 parsing/rewriting for spherical metadata."""
 
 
 # ---------------------------------------------------------------------------
-# Primitives boîtes MP4 (lecture) — mêmes principes que camm.py
+# MP4 box primitives (read) — same principles as camm.py
 # ---------------------------------------------------------------------------
 
 def _read_box_header(buf: bytes, off: int) -> tuple[bytes, int, int]:
     if off + 8 > len(buf):
-        raise SphericalError(f"boîte MP4 tronquée à l'offset {off}")
+        raise SphericalError(f"truncated MP4 box at offset {off}")
     size = int.from_bytes(buf[off:off + 4], "big")
     typ = bytes(buf[off + 4:off + 8])
     hdr = 8
@@ -62,7 +61,7 @@ def _read_box_header(buf: bytes, off: int) -> tuple[bytes, int, int]:
     elif size == 0:
         size = len(buf) - off
     if size < hdr:
-        raise SphericalError(f"taille de boîte MP4 invalide à l'offset {off}")
+        raise SphericalError(f"invalid MP4 box size at offset {off}")
     return typ, size, hdr
 
 
@@ -129,7 +128,7 @@ def _relocate_moov_to_end(data: bytes) -> tuple[bytearray, int, int, int]:
     top = _iter_top_boxes(data)
     moov = next((b for b in top if b[0] == b"moov"), None)
     if moov is None:
-        raise SphericalError("boîte 'moov' introuvable dans le MP4 d'entrée")
+        raise SphericalError("'moov' box not found in the input MP4")
     _, moov_off, moov_size, moov_hdr = moov
 
     out = bytearray()
@@ -147,7 +146,7 @@ def _relocate_moov_to_end(data: bytes) -> tuple[bytearray, int, int, int]:
 
 
 def _grow_box(buf: bytearray, off: int, hdr: int, old_size: int, delta: int) -> None:
-    """Ajoute ``delta`` à la taille (déjà stockée) d'une boîte à ``off``."""
+    """Adds ``delta`` to the (already stored) size of a box at ``off``."""
     new_size = old_size + delta
     if hdr == 16:
         struct.pack_into(">Q", buf, off + 8, new_size)
@@ -156,7 +155,7 @@ def _grow_box(buf: bytearray, off: int, hdr: int, old_size: int, delta: int) -> 
 
 
 # ---------------------------------------------------------------------------
-# Construction des boîtes V1/V2
+# Building the V1/V2 boxes
 # ---------------------------------------------------------------------------
 
 def _u32(v: int) -> bytes:
@@ -176,13 +175,13 @@ def _build_svhd(metadata_source: bytes = b"Osmo360Studio") -> bytes:
 
 
 def _build_prhd() -> bytes:
-    # yaw/pitch/roll = 0 (16.16 fixed) : orientation neutre, sphère complète.
+    # yaw/pitch/roll = 0 (16.16 fixed): neutral orientation, full sphere.
     return _fullbox(b"prhd", 0, 0, struct.pack(">iii", 0, 0, 0))
 
 
 def _build_equi() -> bytes:
-    # projection_bounds top/bottom/left/right = 0 (0.32 fixed) : pas de recadrage,
-    # sphère pleine (valeurs "pleine sphère" demandées).
+    # projection_bounds top/bottom/left/right = 0 (0.32 fixed): no cropping,
+    # full sphere ("full sphere" values requested).
     return _fullbox(b"equi", 0, 0, struct.pack(">IIII", 0, 0, 0, 0))
 
 
@@ -200,12 +199,12 @@ def _build_v1_uuid() -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Localisation de la piste vidéo
+# Locating the video track
 # ---------------------------------------------------------------------------
 
 def _find_video_trak(buf: bytes, moov_body_start: int, moov_body_end: int):
-    """Retourne (trak_off, trak_size, trak_hdr) de la première piste dont le
-    handler mdia/hdlr est 'vide'."""
+    """Returns (trak_off, trak_size, trak_hdr) of the first track whose
+    mdia/hdlr handler is 'vide'."""
     for typ, off, size, hdr in _iter_direct_children(buf, moov_body_start, moov_body_end):
         if typ != b"trak":
             continue
@@ -217,35 +216,35 @@ def _find_video_trak(buf: bytes, moov_body_start: int, moov_body_end: int):
         if hdlr is None:
             continue
         hdlr_off, _hdlr_size, hdlr_hdr = hdlr
-        # hdlr body : version/flags(4) + pre_defined(4) + handler_type(4) + ...
+        # hdlr body: version/flags(4) + pre_defined(4) + handler_type(4) + ...
         handler_type = bytes(buf[hdlr_off + hdlr_hdr + 8:hdlr_off + hdlr_hdr + 12])
         if handler_type == b"vide":
             return off, size, hdr
-    raise SphericalError("aucune piste vidéo (handler 'vide') trouvée dans moov")
+    raise SphericalError("no video track (handler 'vide') found in moov")
 
 
 def _find_sample_entry(buf: bytes, trak_off: int, trak_size: int, trak_hdr: int):
     mdia = _find_direct_child(buf, trak_off + trak_hdr, trak_off + trak_size, b"mdia")
     if mdia is None:
-        raise SphericalError("boîte 'mdia' introuvable dans la piste vidéo")
+        raise SphericalError("'mdia' box not found in the video track")
     mdia_off, mdia_size, mdia_hdr = mdia
     minf = _find_direct_child(buf, mdia_off + mdia_hdr, mdia_off + mdia_size, b"minf")
     if minf is None:
-        raise SphericalError("boîte 'minf' introuvable")
+        raise SphericalError("'minf' box not found")
     minf_off, minf_size, minf_hdr = minf
     stbl = _find_direct_child(buf, minf_off + minf_hdr, minf_off + minf_size, b"stbl")
     if stbl is None:
-        raise SphericalError("boîte 'stbl' introuvable")
+        raise SphericalError("'stbl' box not found")
     stbl_off, stbl_size, stbl_hdr = stbl
     stsd = _find_direct_child(buf, stbl_off + stbl_hdr, stbl_off + stbl_size, b"stsd")
     if stsd is None:
-        raise SphericalError("boîte 'stsd' introuvable")
+        raise SphericalError("'stsd' box not found")
     stsd_off, stsd_size, stsd_hdr = stsd
-    # stsd body : version/flags(4) + entry_count(4), puis la 1ère entrée.
+    # stsd body: version/flags(4) + entry_count(4), then the 1st entry.
     entry_off = stsd_off + stsd_hdr + 8
     entry_typ, entry_size, entry_hdr = _read_box_header(buf, entry_off)
     if entry_typ not in _VIDEO_SAMPLE_ENTRY_TYPES:
-        raise SphericalError(f"entrée d'échantillon vidéo inattendue : {entry_typ!r}")
+        raise SphericalError(f"unexpected video sample entry: {entry_typ!r}")
     ancestors = [
         (mdia_off, mdia_hdr, mdia_size),
         (minf_off, minf_hdr, minf_size),
@@ -257,13 +256,13 @@ def _find_sample_entry(buf: bytes, trak_off: int, trak_size: int, trak_hdr: int)
 
 
 # ---------------------------------------------------------------------------
-# API publique
+# Public API
 # ---------------------------------------------------------------------------
 
 def inject_spherical(mp4_in: str, mp4_out: str) -> None:
-    """Injecte les métadonnées sphériques V1 (uuid GSpherical) + V2 (sv3d) dans
-    la piste vidéo de ``mp4_in``, en mono équirectangulaire plein cadre, et
-    écrit le résultat dans ``mp4_out``."""
+    """Injects spherical metadata V1 (uuid GSpherical) + V2 (sv3d) into
+    the video track of ``mp4_in``, as full-frame monoscopic equirectangular,
+    and writes the result to ``mp4_out``."""
     with open(mp4_in, "rb") as fp:
         data = fp.read()
 
@@ -273,8 +272,8 @@ def inject_spherical(mp4_in: str, mp4_out: str) -> None:
 
     trak_off, trak_size, trak_hdr = _find_video_trak(out, moov_body_start, moov_body_end)
     ancestors = _find_sample_entry(out, trak_off, trak_size, trak_hdr)
-    # ancestors = [mdia, minf, stbl, stsd, entry] ; on ajoute trak et moov, qui
-    # englobent forcément aussi le point d'insertion.
+    # ancestors = [mdia, minf, stbl, stsd, entry]; we add trak and moov, which
+    # necessarily also enclose the insertion point.
     full_chain = [(trak_off, trak_hdr, trak_size), (moov_off, moov_hdr, moov_size)] + ancestors
 
     entry_off, entry_hdr, entry_size = ancestors[-1]
@@ -285,8 +284,8 @@ def inject_spherical(mp4_in: str, mp4_out: str) -> None:
     for box_off, box_hdr, box_size in full_chain:
         _grow_box(out, box_off, box_hdr, box_size, delta)
 
-    # Après la croissance V2, trak s'est agrandi de `delta` : recalcule sa fin
-    # pour insérer le uuid V1 comme tout dernier enfant du trak.
+    # After the V2 growth, trak has grown by `delta`: recompute its end
+    # to insert the V1 uuid as the very last child of trak.
     new_trak_size = trak_size + delta
     new_moov_size = moov_size + delta
     uuid_bytes = _build_v1_uuid()
@@ -307,8 +306,8 @@ def export_windowed_gpx(
     offset_s: float,
     out_path: str,
 ) -> None:
-    """Écrit un GPX (side-car) contenant la trace rééchantillonnée (1 Hz) sur
-    la fenêtre vidéo — utile pour Street View Studio ou vérification manuelle."""
+    """Writes a (side-car) GPX containing the resampled track (1 Hz) over
+    the video window — useful for Street View Studio or manual verification."""
     samples = resample(points, video_start_utc, duration_s, offset_s, rate_hz=1.0)
 
     import xml.etree.ElementTree as ET

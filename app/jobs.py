@@ -1,19 +1,18 @@
-"""File d'attente de conversion .OSV -> MP4 360°.
+"""Conversion queue .OSV -> 360° MP4.
 
-Un seul thread worker, queue FIFO, un seul process ffmpeg actif à la fois.
-Pipeline (voir SPEC.md « Pipeline d'un job convert ») :
-  1. probe + extract_metadata (workdir temporaire du job)
-  2. generate_remap_maps si mode calibré (et calibration disponible)
-  3. ffmpeg stitch -> MP4 temporaire, progression lue depuis -progress pipe:1
-  4. inject_spherical (toujours)
-  5. si GPX fourni : resample + inject_camm (+ export_windowed_gpx en side-car)
-  6. déplacement atomique vers le dossier de sortie : <nom>_360.mp4
+Single worker thread, FIFO queue, one active ffmpeg process at a time.
+Pipeline (see SPEC.md "Convert job pipeline"):
+  1. probe + extract_metadata (job's temporary workdir)
+  2. generate_remap_maps if calibrated mode (and calibration available)
+  3. ffmpeg stitch -> temporary MP4, progress read from -progress pipe:1
+  4. inject_spherical (always)
+  5. if GPX provided: resample + inject_camm (+ export_windowed_gpx as side-car)
+  6. atomic move to the output folder: <name>_360.mp4
 
-Les modules app/core/{maps,stitch,gpx,camm,spherical}.py sont développés par
-d'autres agents en parallèle : tous les imports vers ces modules sont donc
-paresseux (faits à l'intérieur des fonctions) et toute absence/erreur est
-convertie en échec de job propre (status="error", message explicite), jamais
-en crash du serveur.
+The app/core/{maps,stitch,gpx,camm,spherical}.py modules are developed by
+other agents in parallel: all imports of these modules are therefore lazy
+(done inside the functions) and any absence/error is converted into a clean
+job failure (status="error", explicit message), never a server crash.
 """
 from __future__ import annotations
 
@@ -32,18 +31,18 @@ from urllib.parse import quote
 
 
 class JobError(Exception):
-    """Erreur de pipeline destinée à être affichée telle quelle dans job.error."""
+    """Pipeline error meant to be displayed as-is in job.error."""
 
 
 class _JobCancelled(Exception):
-    """Signal interne : le job a été annulé pendant son exécution."""
+    """Internal signal: the job was cancelled during execution."""
 
 
 PUBLIC_FIELDS = ("id", "input", "output", "status", "progress", "fps", "eta_s", "error",
                  "preview_url", "preview_error")
 
-# Le stitch (et les étapes intermédiaires) occupent [0, 0.95] de la progression ;
-# la génération du proxy d'aperçu H.264 occupe [0.95, 1.0].
+# The stitch (and intermediate steps) occupy [0, 0.95] of the progress;
+# H.264 preview proxy generation occupies [0.95, 1.0].
 STITCH_PROGRESS_SPAN = 0.95
 
 
@@ -58,8 +57,8 @@ class Job:
     fps: Optional[float] = None
     eta_s: Optional[float] = None
     error: Optional[str] = None
-    preview_url: Optional[str] = None      # proxy H.264 lisible navigateur (null tant qu'absent)
-    preview_error: Optional[str] = None    # échec non bloquant de génération du proxy
+    preview_url: Optional[str] = None      # H.264 proxy readable by browser (null while absent)
+    preview_error: Optional[str] = None    # non-blocking failure of proxy generation
     duration_s: float = 0.0
     workdir: Optional[str] = None
     process: Optional[subprocess.Popen] = None
@@ -110,7 +109,7 @@ class JobManager:
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
 
-    # -- API publique -----------------------------------------------------
+    # -- Public API -------------------------------------------------------
 
     def submit(self, input_path: str, output_path: str, options: dict) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], input=input_path, output=output_path, options=dict(options))
@@ -176,13 +175,13 @@ class JobManager:
             try:
                 info = osv.probe(job.input)
             except osv.OsvError as exc:
-                raise JobError(f"probe : {exc}") from exc
+                raise JobError(f"probe: {exc}") from exc
             job.duration_s = info.duration_s or 0.0
 
             try:
                 meta = osv.extract_metadata(job.input, workdir)
             except osv.OsvError as exc:
-                raise JobError(f"extraction métadonnées : {exc}") from exc
+                raise JobError(f"metadata extraction: {exc}") from exc
             calibration = meta.get("calibration")
 
             opts = job.options
@@ -192,13 +191,13 @@ class JobManager:
                 opts.setdefault("codec", "hevc")
                 opts.setdefault("quality", 20)
                 opts["embed_camm"] = True
-                # Exigence Google : Street View EXIGE une stabilisation désactivée.
+                # Google requirement: Street View REQUIRES stabilization disabled.
                 opts["stabilize"] = False
 
             try:
                 from app.core.stitch import StitchOptions, build_command
             except ImportError as exc:
-                raise JobError(f"module core/stitch.py indisponible : {exc}") from exc
+                raise JobError(f"module core/stitch.py unavailable: {exc}") from exc
 
             stitch_kwargs = {}
             for key in ("out_w", "codec", "encoder", "quality", "interp", "mode",
@@ -216,16 +215,16 @@ class JobManager:
                     maps = generate_remap_maps(calibration, stitch_opts.out_w, out_h, workdir)
                 except ImportError as exc:
                     if stitch_opts.mode == "calibrated":
-                        raise JobError(f"mode calibré demandé mais module core/maps.py indisponible : {exc}") from exc
+                        raise JobError(f"calibrated mode requested but module core/maps.py unavailable: {exc}") from exc
                     maps = None
-                except Exception as exc:  # noqa: BLE001 - module tiers en cours de dev
+                except Exception as exc:  # noqa: BLE001 - third-party module under development
                     if stitch_opts.mode == "calibrated":
-                        raise JobError(f"échec de génération des cartes de remap : {exc}") from exc
+                        raise JobError(f"failed to generate remap maps: {exc}") from exc
                     maps = None
 
-            # Stabilisation gyroscopique : génère le fichier de commandes sendcmd
-            # (rotation yaw/pitch/roll par frame) quand l'option est active et que
-            # l'IMU est présente. Absence d'IMU -> pas de stabilisation (silencieux).
+            # Gyroscopic stabilization: generates the sendcmd command file
+            # (per-frame yaw/pitch/roll rotation) when the option is active and
+            # the IMU is present. No IMU -> no stabilization (silent).
             stabilize_cmd = None
             if stitch_opts.stabilize:
                 try:
@@ -234,7 +233,7 @@ class JobManager:
                     imu_csv = meta.get("imu_highrate") or meta.get("imu_perframe")
                     eff_fps = float(stitch_opts.fps_out or info.fps or 25.0)
                     n_frames = max(1, int(round((info.duration_s or 0.0) * eff_fps)))
-                    # mode v360 : fondre l'alignement baseline yaw=90 dans les angles.
+                    # v360 mode: fold the yaw=90 baseline alignment into the angles.
                     resolved = _resolve_mode(stitch_opts, maps)
                     fold = stab.BASELINE_YAW_DEG if resolved == "v360" else None
                     res = stab.frame_corrections(
@@ -246,15 +245,15 @@ class JobManager:
                         stabilize_cmd = os.path.join(workdir, "stabilize.cmd")
                         stab.build_sendcmd(res.corrections, eff_fps, stabilize_cmd)
                 except ImportError as exc:
-                    raise JobError(f"stabilisation demandée mais module core/stabilize.py indisponible : {exc}") from exc
+                    raise JobError(f"stabilization requested but module core/stabilize.py unavailable: {exc}") from exc
                 except Exception as exc:  # noqa: BLE001
-                    raise JobError(f"préparation de la stabilisation : {exc}") from exc
+                    raise JobError(f"stabilization preparation: {exc}") from exc
 
             try:
                 cmd = build_command(job.input, os.path.join(workdir, "stitched.mp4"),
                                     stitch_opts, maps, stabilize_cmd=stabilize_cmd)
             except Exception as exc:  # noqa: BLE001
-                raise JobError(f"construction de la commande ffmpeg : {exc}") from exc
+                raise JobError(f"ffmpeg command construction: {exc}") from exc
 
             stitched = os.path.join(workdir, "stitched.mp4")
             self._run_ffmpeg(job, cmd, info.duration_s or job.duration_s,
@@ -262,18 +261,18 @@ class JobManager:
             if job.cancel_requested:
                 raise _JobCancelled()
             if not os.path.isfile(stitched):
-                raise JobError("ffmpeg n'a produit aucune sortie (échec silencieux)")
+                raise JobError("ffmpeg produced no output (silent failure)")
 
             current = stitched
             try:
                 from app.core.spherical import inject_spherical
             except ImportError as exc:
-                raise JobError(f"module core/spherical.py indisponible : {exc}") from exc
+                raise JobError(f"module core/spherical.py unavailable: {exc}") from exc
             sph_out = os.path.join(workdir, "spherical.mp4")
             try:
                 inject_spherical(current, sph_out)
             except Exception as exc:  # noqa: BLE001
-                raise JobError(f"injection métadonnées sphériques : {exc}") from exc
+                raise JobError(f"spherical metadata injection: {exc}") from exc
             current = sph_out if os.path.isfile(sph_out) else current
 
             gpx_path = opts.get("gpx_path")
@@ -282,7 +281,7 @@ class JobManager:
                     from app.core.gpx import parse_gpx, resample
                     from app.core.camm import inject_camm
                 except ImportError as exc:
-                    raise JobError(f"GPX/CAMM demandés mais module indisponible : {exc}") from exc
+                    raise JobError(f"GPX/CAMM requested but module unavailable: {exc}") from exc
                 try:
                     points = parse_gpx(gpx_path)
                     offset_s = float(opts.get("gpx_offset_s") or 0.0)
@@ -299,17 +298,17 @@ class JobManager:
                 except JobError:
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    raise JobError(f"traitement GPX/CAMM : {exc}") from exc
+                    raise JobError(f"GPX/CAMM processing: {exc}") from exc
             elif opts.get("embed_camm"):
-                raise JobError("embed_camm demandé mais aucun gpx_path fourni")
+                raise JobError("embed_camm requested but no gpx_path provided")
 
             os.makedirs(os.path.dirname(os.path.abspath(job.output)), exist_ok=True)
             tmp_final = job.output + ".part"
             shutil.move(current, tmp_final)
             os.replace(tmp_final, job.output)
 
-            # Phase finale (0.95 -> 1.0) : proxy d'aperçu H.264 lisible navigateur.
-            # Non bloquante : en cas d'échec le job reste "done" (preview_error renseigné).
+            # Final phase (0.95 -> 1.0): H.264 preview proxy readable by browser.
+            # Non-blocking: on failure the job stays "done" (preview_error set).
             self._set(job, progress=STITCH_PROGRESS_SPAN, fps=None, eta_s=None)
             self._generate_preview(job, info.duration_s or job.duration_s)
             self._set(job, status="done", progress=1.0, eta_s=0.0)
@@ -317,15 +316,15 @@ class JobManager:
             self._set(job, status="cancelled")
         except JobError as exc:
             self._set(job, status="error", error=str(exc))
-        except Exception as exc:  # noqa: BLE001 - dernier filet, ne jamais planter le worker
-            self._set(job, status="error", error=f"erreur interne : {exc}")
+        except Exception as exc:  # noqa: BLE001 - last safety net, never crash the worker
+            self._set(job, status="error", error=f"internal error: {exc}")
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
     def _generate_preview(self, job: Job, duration_s: float) -> None:
-        """Génère un proxy H.264 8-bit 1920x960 lisible par les navigateurs
-        (la sortie HEVC 10-bit n'est pas décodable par Chrome/Linux).
-        Stocké dans ~/.cache/panoforge/previews/<hash>.mp4."""
+        """Generate an 8-bit 1920x960 H.264 proxy readable by browsers
+        (10-bit HEVC output is not decodable by Chrome/Linux).
+        Stored in ~/.cache/panoforge/previews/<hash>.mp4."""
         try:
             from app import config
 
@@ -349,28 +348,28 @@ class JobManager:
                     "-c:a", "aac",
                     "-movflags", "+faststart",
                     "-progress", "pipe:1", "-nostats",
-                    "-f", "mp4",  # le suffixe .part n'est pas un format connu de ffmpeg
+                    "-f", "mp4",  # the .part suffix is not a format known to ffmpeg
                     tmp_preview,
                 ]
                 self._run_ffmpeg(job, cmd, duration_s,
                                  progress_base=STITCH_PROGRESS_SPAN,
                                  progress_span=1.0 - STITCH_PROGRESS_SPAN)
                 if job.cancel_requested:
-                    # La sortie finale existe déjà : le job reste "done",
-                    # seule la miniature d'aperçu est abandonnée.
+                    # The final output already exists: the job stays "done",
+                    # only the preview thumbnail is dropped.
                     try:
                         os.remove(tmp_preview)
                     except OSError:
                         pass
-                    self._set(job, preview_error="génération de l'aperçu interrompue")
+                    self._set(job, preview_error="preview generation interrupted")
                     return
                 os.replace(tmp_preview, preview_path)
 
             self._set(job, preview_url=f"/api/media?path={quote(preview_path)}")
         except JobError as exc:
             self._set(job, preview_error=str(exc))
-        except Exception as exc:  # noqa: BLE001 - jamais bloquant
-            self._set(job, preview_error=f"erreur interne : {exc}")
+        except Exception as exc:  # noqa: BLE001 - never blocking
+            self._set(job, preview_error=f"internal error: {exc}")
 
     def _run_ffmpeg(self, job: Job, cmd: list[str], duration_s: float,
                     progress_base: float = 0.0, progress_span: float = 1.0) -> None:
@@ -379,7 +378,7 @@ class JobManager:
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1,
             )
         except OSError as exc:
-            raise JobError(f"lancement ffmpeg impossible : {exc}") from exc
+            raise JobError(f"cannot launch ffmpeg: {exc}") from exc
 
         self._set(job, process=proc)
         start = time.monotonic()
@@ -437,7 +436,7 @@ class JobManager:
             return
         if proc.returncode != 0:
             tail = "".join(stderr_tail).strip()[-800:]
-            raise JobError(f"ffmpeg a échoué (code {proc.returncode}) : {tail or 'pas de détail'}")
+            raise JobError(f"ffmpeg failed (code {proc.returncode}): {tail or 'no details'}")
 
 
 manager = JobManager()

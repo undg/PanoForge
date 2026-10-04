@@ -1,23 +1,22 @@
-"""Parsing GPX (stdlib xml), analyse de couverture et fenêtrage/rééchantillonnage
-pour l'injection GPS ultérieure (piste CAMM, cf. camm.py).
+"""GPX parsing (stdlib xml), coverage analysis and windowing/resampling
+for later GPS injection (CAMM track, cf. camm.py).
 
-Aucune dépendance externe (pas de gpxpy) : ``xml.etree.ElementTree`` uniquement.
+No external dependency (no gpxpy): ``xml.etree.ElementTree`` only.
 
-Modèle de correction d'offset (important, lu par camm.py) :
-    ``resample()`` produit toujours un point par tick de ``rate_hz`` sur toute la
-    fenêtre vidéo ``[0, duration_s]`` (temps *relatif à la vidéo*, donc le premier
-    point correspond toujours à ``video_start_utc`` et le dernier à
-    ``video_start_utc + duration_s``, qu'il y ait ou non du GPX aux extrémités).
-    Le point de sortie d'indice ``i`` est étiqueté ``t = video_start_utc + i/rate_hz``
-    (c'est cette valeur, et non l'horodatage brut du GPX, qui est écrite dans le
-    paquet CAMM comme ``time_gps_epoch`` : après correction d'``offset_s``, le
-    "temps GPS" affiché doit coïncider avec l'instant réel de la vidéo). La
-    position (lat/lon/ele) à cet instant est interpolée dans la trace brute au
-    temps réel ``t + offset_s`` — c'est ``offset_s`` qui exprime le décalage
-    d'horloge entre le GPX et la vidéo, pas un décalage de PTS dans le fichier
-    final. Ainsi ``camm.py`` n'a besoin que de ``video_start_utc`` (pas de
-    l'offset) pour replacer chaque échantillon sur la timeline de la vidéo :
-    ``pts = t - video_start_utc``.
+Offset-correction model (important, read by camm.py):
+    ``resample()`` always produces one point per ``rate_hz`` tick over the whole
+    video window ``[0, duration_s]`` (time *relative to the video*, so the first
+    point always corresponds to ``video_start_utc`` and the last to
+    ``video_start_utc + duration_s``, whether or not there is GPX at the ends).
+    The output point with index ``i`` is labeled ``t = video_start_utc + i/rate_hz``
+    (this value, and not the raw GPX timestamp, is what is written into the
+    CAMM packet as ``time_gps_epoch``: after correcting ``offset_s``, the
+    displayed "GPS time" must coincide with the real instant of the video). The
+    position (lat/lon/ele) at that instant is interpolated in the raw track at
+    real time ``t + offset_s`` — it is ``offset_s`` that expresses the clock
+    offset between the GPX and the video, not a PTS offset in the final file.
+    Thus ``camm.py`` only needs ``video_start_utc`` (not the offset) to place
+    each sample back on the video timeline: ``pts = t - video_start_utc``.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ EARTH_RADIUS_M = 6371000.0
 
 
 class GpxError(Exception):
-    """Erreur explicite de parsing/traitement GPX."""
+    """Explicit GPX parsing/processing error."""
 
 
 @dataclass
@@ -54,22 +53,22 @@ def _parse_gpx_time(text: str) -> datetime:
     try:
         dt = datetime.fromisoformat(s)
     except ValueError as exc:
-        raise GpxError(f"horodatage GPX illisible : {text!r}") from exc
+        raise GpxError(f"unreadable GPX timestamp: {text!r}") from exc
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
 def parse_gpx(path: str) -> list[GpxPoint]:
-    """Parse un fichier GPX (trkpt uniquement) et retourne les points triés par
-    horodatage croissant (UTC). Les ``trkpt`` sans balise ``<time>`` sont ignorés
-    (impossible à situer sur la timeline vidéo)."""
+    """Parse a GPX file (trkpt only) and return the points sorted by
+    increasing timestamp (UTC). ``trkpt`` without a ``<time>`` tag are ignored
+    (cannot be placed on the video timeline)."""
     try:
         tree = ET.parse(path)
     except ET.ParseError as exc:
-        raise GpxError(f"XML GPX invalide dans {path} : {exc}") from exc
+        raise GpxError(f"invalid GPX XML in {path}: {exc}") from exc
     except OSError as exc:
-        raise GpxError(f"fichier GPX introuvable : {path}") from exc
+        raise GpxError(f"GPX file not found: {path}") from exc
 
     points: list[GpxPoint] = []
     for trkpt in tree.getroot().iter():
@@ -111,8 +110,8 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def analyze(points: list[GpxPoint], video_start_utc: datetime, duration_s: float) -> dict:
-    """Évalue la couverture GPX de la fenêtre vidéo ``[video_start_utc,
-    video_start_utc+duration_s]`` à offset nul, pour affichage/curseur côté UI."""
+    """Assess the GPX coverage of the video window ``[video_start_utc,
+    video_start_utc+duration_s]`` at zero offset, for UI display/slider."""
     window_start = video_start_utc
     window_end = video_start_utc + timedelta(seconds=duration_s)
 
@@ -142,7 +141,7 @@ def analyze(points: list[GpxPoint], video_start_utc: datetime, duration_s: float
     elif coverage_pct >= 90.0:
         suggested_offset_s = 0.0
     else:
-        # Décale la fenêtre pour la faire coïncider avec le début de la trace GPX.
+        # Shift the window to make it coincide with the start of the GPX track.
         suggested_offset_s = (points[0].t - video_start_utc).total_seconds()
 
     return {
@@ -161,14 +160,14 @@ def resample(
     offset_s: float,
     rate_hz: float = 1.0,
 ) -> list[GpxPoint]:
-    """Rééchantillonne la trace GPX brute sur toute la fenêtre vidéo, à ``rate_hz``.
+    """Resample the raw GPX track over the whole video window, at ``rate_hz``.
 
-    Fenêtrage réel dans le GPX : ``[video_start_utc+offset_s,
-    video_start_utc+offset_s+duration_s]``. Le point de sortie ``i`` est étiqueté
-    au temps *vidéo* ``video_start_utc + i/rate_hz`` (voir docstring du module) et
-    interpolé linéairement dans la trace brute au temps réel correspondant
-    (``+ offset_s``). En dehors de la trace GPX, la position est maintenue
-    (extrapolation constante) plutôt que devinée.
+    Real windowing in the GPX: ``[video_start_utc+offset_s,
+    video_start_utc+offset_s+duration_s]``. The output point ``i`` is labeled
+    at *video* time ``video_start_utc + i/rate_hz`` (see the module docstring)
+    and interpolated linearly in the raw track at the corresponding real time
+    (``+ offset_s``). Outside the GPX track, the position is held
+    (constant extrapolation) rather than guessed.
     """
     if not points or duration_s <= 0 or rate_hz <= 0:
         return []

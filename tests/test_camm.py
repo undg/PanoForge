@@ -1,13 +1,13 @@
-"""Tests de app/core/camm.py — injection d'une piste CAMM (GPS type 6) dans un MP4.
+"""Tests for app/core/camm.py — injection of a CAMM track (GPS type 6) into an MP4.
 
-Construit de petits MP4 de test avec ffmpeg (testsrc, silencieux ou avec piste
-audio, moov avant/après mdat) et vérifie :
-  - que ffprobe relit le fichier sans erreur, avec la durée intacte et une
-    piste de données taguée 'camm' ;
-  - que les paquets GPS injectés se décodent (avec notre propre lecteur de
-    boîtes, sans dépendance externe) avec les bonnes valeurs aux bons PTS ;
-  - avec exiftool si disponible, que les mêmes valeurs sont lisibles par un
-    outil tiers (alignement GPX<->vidéo correct).
+Builds small test MP4s with ffmpeg (testsrc, silent or with an audio track,
+moov before/after mdat) and verifies:
+  - that ffprobe reads the file back without error, with the duration intact and
+    a data track tagged 'camm';
+  - that the injected GPS packets decode (with our own box reader, without
+    external dependency) with the right values at the right PTS;
+  - with exiftool if available, that the same values are readable by a
+    third-party tool (correct GPX<->video alignment).
 """
 import json
 import os
@@ -24,7 +24,7 @@ FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
 EXIFTOOL = shutil.which("exiftool")
 
-pytestmark = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="ffmpeg/ffprobe absents du système")
+pytestmark = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="ffmpeg/ffprobe missing from the system")
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "track_streetview.gpx")
 VIDEO_START = datetime(2026, 7, 7, 20, 0, 0, tzinfo=timezone.utc)
@@ -58,8 +58,8 @@ def _resampled_samples(offset_s: float = 0.0, rate_hz: float = 1.0):
 
 
 def _decode_camm_samples(mp4_path: str):
-    """Relit les échantillons CAMM injectés directement depuis les boîtes MP4
-    (indépendamment de ffprobe/exiftool) : retourne une liste de dicts
+    """Read back the injected CAMM samples directly from the MP4 boxes
+    (independently of ffprobe/exiftool): returns a list of dicts
     {pts_s, time_gps_epoch, lat, lon, alt}."""
     data = open(mp4_path, "rb").read()
 
@@ -79,7 +79,7 @@ def _decode_camm_samples(mp4_path: str):
             yield typ, off, size, hdr
             off += size
 
-    # trouve moov (peut être n'importe où : on ne suppose rien de l'ordre)
+    # find moov (can be anywhere: nothing is assumed about the order)
     moov = None
     off, n = 0, len(data)
     while off + 8 <= n:
@@ -88,7 +88,7 @@ def _decode_camm_samples(mp4_path: str):
             moov = (off, size, hdr)
             break
         off += size
-    assert moov is not None, "moov introuvable dans le fichier produit"
+    assert moov is not None, "moov not found in the produced file"
     moov_off, moov_size, moov_hdr = moov
 
     camm_trak = None
@@ -102,7 +102,7 @@ def _decode_camm_samples(mp4_path: str):
                         handler = data[off3 + hdr3 + 8:off3 + hdr3 + 12]
                         if handler == b"camm":
                             camm_trak = (toff, tsize, thdr)
-    assert camm_trak is not None, "piste 'camm' introuvable dans moov"
+    assert camm_trak is not None, "track 'camm' not found in moov"
     toff, tsize, thdr = camm_trak
 
     mdia = next(c for c in children(toff + thdr, toff + tsize) if c[0] == b"mdia")
@@ -120,13 +120,13 @@ def _decode_camm_samples(mp4_path: str):
 
     assert stts and stco and stsz
 
-    # stsz : sample_size constant si != 0
+    # stsz: sample_size constant if != 0
     body = stsz[0] + stsz[2]
     sample_size = int.from_bytes(data[body + 4:body + 8], "big")
     sample_count = int.from_bytes(data[body + 8:body + 12], "big")
-    assert sample_size == 60, "paquet CAMM type 6 attendu à 60 octets"
+    assert sample_size == 60, "CAMM type 6 packet expected at 60 bytes"
 
-    # stco/co64 : un seul chunk contenant tous les échantillons (cf. camm.py)
+    # stco/co64: a single chunk containing all samples (cf. camm.py)
     typ, off_, size_, hdr_ = stco
     body = off_ + hdr_
     count = int.from_bytes(data[body + 4:body + 8], "big")
@@ -136,7 +136,7 @@ def _decode_camm_samples(mp4_path: str):
     else:
         first_offset = int.from_bytes(data[body + 8:body + 16], "big")
 
-    # stts : reconstruit les PTS cumulés
+    # stts: reconstruct the cumulative PTS
     body = stts[0] + stts[2]
     run_count = int.from_bytes(data[body + 4:body + 8], "big")
     durations = []
@@ -189,7 +189,7 @@ def test_inject_camm_readable_by_ffprobe(tmp_path, with_audio, faststart):
     if with_audio:
         assert any(k[0] == "audio" for k in kinds)
 
-    # le fichier doit rester intégralement décodable (pas juste "ouvrable")
+    # the file must remain fully decodable (not just "openable")
     subprocess.run(
         [FFMPEG, "-v", "error", "-i", out, "-map", "0:v:0", "-f", "null", "-"],
         check=True, capture_output=True, text=True,
@@ -207,33 +207,33 @@ def test_inject_camm_packets_match_samples_and_are_time_aligned(tmp_path):
     decoded = _decode_camm_samples(out)
     assert len(decoded) == len(samples) == 11
 
-    # PTS strictement monotone
+    # strictly monotonic PTS
     ticks = [d["pts_ticks"] for d in decoded]
     assert ticks == sorted(ticks)
     assert len(set(ticks)) == len(ticks)
     assert ticks[0] == 0
 
-    # PTS (converti en secondes, timescale 90000) == décalage vidéo attendu (0..10s)
+    # PTS (converted to seconds, timescale 90000) == expected video offset (0..10s)
     for i, d in enumerate(decoded):
         assert d["pts_ticks"] / camm.CAMM_TIMESCALE == pytest.approx(i * 1.0, abs=1e-6)
 
-    # valeurs GPS + alignement temporel : le paquet i doit correspondre exactement
-    # à samples[i] (même lat/lon/alt, et l'epoch GPS == instant réel vidéo, cf.
-    # docstring gpx.py : après correction d'offset, time_gps_epoch == heure vidéo)
+    # GPS values + time alignment: packet i must correspond exactly
+    # to samples[i] (same lat/lon/alt, and the GPS epoch == real video instant, cf.
+    # gpx.py docstring: after offset correction, time_gps_epoch == video time)
     for i, (d, s) in enumerate(zip(decoded, samples)):
         assert d["lat"] == pytest.approx(s.lat, abs=1e-9)
         assert d["lon"] == pytest.approx(s.lon, abs=1e-9)
         assert d["alt"] == pytest.approx(s.ele, abs=1e-3)
         expected_epoch = s.t.timestamp()
         assert d["time_gps_epoch"] == pytest.approx(expected_epoch, abs=1e-6)
-        # l'instant GPS doit tomber exactement à VIDEO_START + i secondes
+        # the GPS instant must fall exactly at VIDEO_START + i seconds
         assert d["time_gps_epoch"] == pytest.approx((VIDEO_START + timedelta(seconds=i)).timestamp(), abs=1e-6)
 
 
 def test_inject_camm_with_offset_keeps_video_timeline_but_shifts_position(tmp_path):
-    """Le GPX est décalé de +5 s (horloge GPX en avance) : la position injectée
-    doit correspondre à la trace brute 5 s plus loin, mais rester placée aux
-    mêmes PTS vidéo (0..10 s) — c'est tout l'intérêt du curseur d'offset."""
+    """The GPX is shifted by +5 s (GPX clock ahead): the injected position
+    must correspond to the raw track 5 s later, but stay placed at the
+    same video PTS (0..10 s) — this is the whole point of the offset slider."""
     src = str(tmp_path / "src.mp4")
     out = str(tmp_path / "out.mp4")
     _make_video(src, with_audio=False, faststart=False)
@@ -245,16 +245,16 @@ def test_inject_camm_with_offset_keeps_video_timeline_but_shifts_position(tmp_pa
     camm.inject_camm(src, out, samples_5, VIDEO_START)
     decoded = _decode_camm_samples(out)
 
-    # même PTS que le cas offset=0 (même nombre d'échantillons, mêmes deltas)
+    # same PTS as the offset=0 case (same number of samples, same deltas)
     ticks = [d["pts_ticks"] for d in decoded]
     assert ticks[0] == 0
     assert ticks[-1] / camm.CAMM_TIMESCALE == pytest.approx(10.0, abs=1e-6)
 
-    # la position au 1er échantillon doit être celle du GPX brut 5 s plus tard
+    # the position at the 1st sample must be that of the raw GPX 5 s later
     raw_at_t5 = next(p for p in points if p.t == VIDEO_START + timedelta(seconds=5))
     assert decoded[0]["lat"] == pytest.approx(raw_at_t5.lat, abs=1e-9)
     assert decoded[0]["lon"] == pytest.approx(raw_at_t5.lon, abs=1e-9)
-    # mais l'epoch GPS enregistré reste l'heure vidéo (VIDEO_START), pas 19:59:55+5s
+    # but the recorded GPS epoch remains the video time (VIDEO_START), not 19:59:55+5s
     assert decoded[0]["time_gps_epoch"] == pytest.approx(VIDEO_START.timestamp(), abs=1e-6)
     assert decoded[0]["lat"] != pytest.approx(samples_0[0].lat, abs=1e-9)
 
@@ -267,7 +267,7 @@ def test_inject_camm_empty_samples_raises(tmp_path):
         camm.inject_camm(src, out, [], VIDEO_START)
 
 
-@pytest.mark.skipif(not EXIFTOOL, reason="exiftool absent du système")
+@pytest.mark.skipif(not EXIFTOOL, reason="exiftool missing from the system")
 def test_inject_camm_readable_by_exiftool(tmp_path):
     src = str(tmp_path / "src.mp4")
     out = str(tmp_path / "out.mp4")

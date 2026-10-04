@@ -1,9 +1,9 @@
-"""Tests de la stabilisation gyroscopique (app/core/stabilize.py).
+"""Tests for gyroscopic stabilization (app/core/stabilize.py).
 
-Couvre : slerp, décodage euler v360 (aller-retour), alignement PTS de
-load_orientations, les trois modes (horizon/lock/smooth), la force normalisée
-[0,1], l'absence d'IMU (drapeau + corrections nulles) et la construction du
-fichier sendcmd. Un test end-to-end vérifie l'injection dans stitch.py.
+Covers: slerp, v360 euler decoding (round trip), PTS alignment of
+load_orientations, the three modes (horizon/lock/smooth), the normalized strength
+[0,1], the absence of IMU (flag + zero corrections) and the construction of the
+sendcmd file. An end-to-end test verifies the injection into stitch.py.
 """
 
 import math
@@ -26,7 +26,7 @@ PERFRAME = os.path.join(FIXTURES, "imu_perframe.csv")
 # --- helpers ----------------------------------------------------------------
 
 def _write_highrate(path, quats, fps=25.0, sub_per_frame=4):
-    """Écrit un imu_highrate.csv synthétique (frame,subidx,qw..qz)."""
+    """Writes a synthetic imu_highrate.csv (frame,subidx,qw..qz)."""
     with open(path, "w") as fp:
         fp.write("frame,subidx,qw,qx,qy,qz\n")
         for f, q in enumerate(quats):
@@ -55,21 +55,21 @@ def test_slerp_endpoints_and_midpoint():
 
 
 def test_slerp_shortest_path_double_cover():
-    # q et -q représentent la même orientation : le slerp prend le court chemin.
+    # q and -q represent the same orientation: slerp takes the shortest path.
     q0 = [1.0, 0.0, 0.0, 0.0]
     q1 = [-1.0, 0.0, 0.0, 0.0]
     mid = S.slerp(q0, q1, 0.5)
-    # doit rester proche de l'identité (pas une rotation de 180°)
+    # must stay close to identity (not a 180° rotation)
     assert abs(abs(mid[0]) - 1.0) < 1e-6
 
 
-# --- décodage euler v360 (aller-retour) -------------------------------------
+# --- v360 euler decoding (round trip) ---------------------------------------
 
 def test_v360_euler_roundtrip():
     rng = np.random.default_rng(0)
     for _ in range(200):
         yaw = float(rng.uniform(-179, 179))
-        pitch = float(rng.uniform(-89, 89))   # évite le blocage de cardan exact
+        pitch = float(rng.uniform(-89, 89))   # avoids exact gimbal lock
         roll = float(rng.uniform(-179, 179))
         V = S._vmat(yaw, pitch, roll)
         y2, p2, r2 = S._v360_euler_from_matrix(V)
@@ -78,7 +78,7 @@ def test_v360_euler_roundtrip():
 
 
 def test_v360_gimbal_does_not_crash():
-    V = S._vmat(30.0, 90.0, 0.0)  # pitch ±90 -> cardan
+    V = S._vmat(30.0, 90.0, 0.0)  # pitch ±90 -> gimbal
     y, p, r = S._v360_euler_from_matrix(V)
     assert np.abs(S._vmat(y, p, r) - V).max() < 1e-6
 
@@ -93,8 +93,8 @@ def test_load_orientations_perframe_count_and_pts(tmp_path):
 
 
 def test_load_orientations_resamples_highrate(tmp_path):
-    # rampe de roll de 0 à 40° sur 40 frames -> l'orientation à mi-parcours
-    # doit être ~20° (slerp continu).
+    # roll ramp from 0 to 40° over 40 frames -> the orientation at the midpoint
+    # must be ~20° (continuous slerp).
     quats = [_axis_quat([0, 0, 1], 40.0 * i / 39.0) for i in range(40)]
     hp = tmp_path / "hr.csv"
     _write_highrate(str(hp), quats, fps=25.0)
@@ -112,35 +112,35 @@ def test_load_orientations_absent_file():
 # --- modes ------------------------------------------------------------------
 
 def _flat_quats(n, tilt_deg=25.0, axis=(1, 0, 0)):
-    """n frames toutes inclinées de tilt_deg (orientation constante)."""
+    """n frames all tilted by tilt_deg (constant orientation)."""
     return [_axis_quat(axis, tilt_deg) for _ in range(n)]
 
 
 def test_horizon_levels_constant_tilt():
-    # orientation constante inclinée -> correction constante non nulle qui, ré-
-    # appliquée, ramène la gravité au nadir (-Ye) en équirect.
+    # constant tilted orientation -> constant non-zero correction which, re-
+    # applied, brings gravity back to the nadir (-Ye) in equirect.
     quats = _flat_quats(10, tilt_deg=30.0, axis=(1, 0, 0))
     corr = S.compute_corrections(quats, "horizon", {"strength": 1.0, "fps": 25.0})
     assert len(corr) == 10
-    # correction identique sur toutes les frames (orientation figée)
+    # identical correction on all frames (frozen orientation)
     for c in corr[1:]:
         assert c == pytest.approx(corr[0], abs=1e-6)
-    # vérifie le nivelé : gravité en équirect ramenée sur (0,-1,0)
+    # verify leveling: gravity in equirect brought back to (0,-1,0)
     M = np.array(S._BODY_TO_EQUIRECT)
     Rbw = S._quat_to_matrix(quats[0])
     g_e = M @ (Rbw.T @ np.array(S.WORLD_DOWN))
-    Rc = S._vmat(*corr[0])          # matrice v360 correspondant à la correction
+    Rc = S._vmat(*corr[0])          # v360 matrix corresponding to the correction
     leveled = Rc @ g_e
     assert leveled == pytest.approx([0.0, -1.0, 0.0], abs=1e-4)
 
 
 def test_horizon_identity_when_upright():
-    # « Debout » pour cette caméra = boitier X pointant vers le bas (gravité),
-    # soit Rbw envoyant X_boitier sur Z_monde(bas) : rotation -90° autour de Y.
+    # "Upright" for this camera = body X pointing down (gravity),
+    # i.e. Rbw sending X_body onto Z_world(down): rotation -90° around Y.
     q_upright = _axis_quat([0, 1, 0], -90.0)
     corr = S.compute_corrections([q_upright] * 5, "horizon",
                                  {"strength": 1.0, "fps": 25.0})
-    # gravité déjà au nadir -> correction quasi nulle
+    # gravity already at the nadir -> nearly zero correction
     for c in corr:
         assert max(abs(v) for v in c) < 1e-3
 
@@ -150,7 +150,7 @@ def test_strength_scales_horizon_correction():
     full = S.compute_corrections(quats, "horizon", {"strength": 1.0, "fps": 25.0})[0]
     half = S.compute_corrections(quats, "horizon", {"strength": 0.5, "fps": 25.0})[0]
     zero = S.compute_corrections(quats, "horizon", {"strength": 0.0, "fps": 25.0})[0]
-    # force 0 = pas de correction ; force 1 > force 0.5 > force 0 (en amplitude)
+    # strength 0 = no correction; strength 1 > strength 0.5 > strength 0 (in amplitude)
     amp = lambda c: math.sqrt(sum(v * v for v in c))
     assert amp(zero) < 1e-6
     assert amp(half) < amp(full)
@@ -158,18 +158,18 @@ def test_strength_scales_horizon_correction():
 
 
 def test_lock_reference_frame_is_identity():
-    # frame de référence (ref_index) -> correction identité.
+    # reference frame (ref_index) -> identity correction.
     quats = [_axis_quat([0, 0, 1], d) for d in (0, 10, 20, 30)]
     corr = S.compute_corrections(quats, "lock",
                                  {"strength": 1.0, "fps": 25.0, "ref_index": 0})
     assert max(abs(v) for v in corr[0]) < 1e-4
-    # les frames suivantes reçoivent une correction non nulle
+    # the following frames receive a non-zero correction
     assert max(abs(v) for v in corr[3]) > 1.0
 
 
 def test_smooth_returns_one_per_frame_and_reduces_jitter():
-    # orientation lente + secousse haute fréquence : smooth doit produire une
-    # correction par frame et ne pas exploser.
+    # slow orientation + high-frequency shake: smooth must produce one
+    # correction per frame and not blow up.
     base = [_axis_quat([0, 0, 1], 5.0 * math.sin(i / 5.0)) for i in range(30)]
     jitter = []
     for i, q in enumerate(base):
@@ -186,7 +186,7 @@ def test_invalid_mode_raises():
         S.compute_corrections([[1, 0, 0, 0]], "nope", {})
 
 
-# --- absence d'IMU ----------------------------------------------------------
+# --- absence of IMU ---------------------------------------------------------
 
 def test_frame_corrections_no_imu_flag():
     res = S.frame_corrections("/nonexistent.csv", 25.0, 50, "horizon", 1.0)
@@ -199,7 +199,7 @@ def test_compute_corrections_empty_quats():
     assert S.compute_corrections([], "horizon", {}) == []
 
 
-# --- construction sendcmd ---------------------------------------------------
+# --- sendcmd construction ---------------------------------------------------
 
 def test_build_sendcmd_format(tmp_path):
     corr = [(10.0, -5.0, 3.0), (11.0, -6.0, 4.0), (12.0, -7.0, 5.0)]
@@ -207,11 +207,11 @@ def test_build_sendcmd_format(tmp_path):
     S.build_sendcmd(corr, 25.0, str(p))
     lines = p.read_text().strip().splitlines()
     assert len(lines) == 3
-    # déclenchement une demi-frame en avance (robustesse timing) ; frame 0 -> t=0
+    # triggered half a frame early (timing robustness); frame 0 -> t=0
     assert lines[0].startswith("0.000000 ")
     assert "v360 yaw" in lines[0] and "v360 pitch" in lines[0] and "v360 roll" in lines[0]
     assert lines[0].rstrip().endswith(";")
-    # temps croissants
+    # increasing times
     t = [float(ln.split(" ", 1)[0]) for ln in lines]
     assert t == sorted(t)
 
@@ -222,7 +222,7 @@ def test_build_sendcmd_empty(tmp_path):
     assert p.read_text() == ""
 
 
-# --- intégration stitch.py --------------------------------------------------
+# --- stitch.py integration --------------------------------------------------
 
 def _fake_mapset(w=3840, h=1920):
     return MapSet(out_w=w, out_h=h, xmaps=["/tmp/x0.pgm", "/tmp/x1.pgm"],
@@ -239,7 +239,7 @@ def test_stitch_v360_stabilized_neutral_init(tmp_path):
     open(scmd, "w").close()
     opts = StitchOptions(out_w=3840, encoder="cpu", mode="v360", stabilize=True)
     g = _graph(build_command("/in.OSV", "/out.mp4", opts, stabilize_cmd=scmd))
-    # un SEUL v360, init neutre, piloté par sendcmd
+    # a SINGLE v360, neutral init, driven by sendcmd
     assert g.count("v360=") == 1
     assert "yaw=0:pitch=0:roll=0" in g and "yaw=90" not in g
     assert "sendcmd=f=" in g and "input=dfisheye" in g
@@ -256,7 +256,7 @@ def test_stitch_calibrated_stabilized_adds_single_v360(tmp_path):
 
 
 def test_stitch_no_regression_without_stabilize():
-    # sans stabilize_cmd, la baseline est intacte (yaw=90, pas de sendcmd).
+    # without stabilize_cmd, the baseline is intact (yaw=90, no sendcmd).
     opts = StitchOptions(out_w=7680, encoder="cpu", mode="v360")
     g = _graph(build_command("/in.OSV", "/out.mp4", opts))
     assert "yaw=90" in g and "sendcmd" not in g and "v360=input=dfisheye" in g
@@ -266,7 +266,7 @@ def test_stitch_no_regression_without_stabilize():
 
 
 def test_stitch_path_escaping(tmp_path):
-    # un chemin contenant une virgule doit être échappé dans filter_complex.
+    # a path containing a comma must be escaped in filter_complex.
     scmd = str(tmp_path / "a,b.cmd")
     open(scmd, "w").close()
     opts = StitchOptions(out_w=3840, encoder="cpu", mode="v360", stabilize=True)

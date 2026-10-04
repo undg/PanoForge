@@ -1,4 +1,4 @@
-/* PanoForge — thème sombre sobre, vanilla CSS */
+/* PanoForge — understated dark theme, vanilla CSS */
 
 :root {
   color-scheme: dark;
@@ -26,9 +26,9 @@
   box-sizing: border-box;
 }
 
-/* L'attribut [hidden] doit toujours l'emporter, même sur des éléments dont la
-   classe définit display:flex/grid (les styles auteur passent sinon devant la
-   feuille de style UA de [hidden] à priorité égale). */
+/* The [hidden] attribute must always win, even on elements whose class defines
+   display:flex/grid (author styles otherwise come before the UA stylesheet for
+   [hidden] at equal specificity). */
 [hidden] {
   display: none !important;
 }
@@ -251,7 +251,7 @@ main {
 
 /* --- Files view --- */
 
-/* Barre d'outils (hub) : dossier source + accès rapide + ouvrir un fichier */
+/* Toolbar (hub): source folder + quick access + open a file */
 .files-hub {
   display: flex;
   flex-direction: column;
@@ -294,8 +294,8 @@ main {
   font-size: 0.82rem;
 }
 
-/* Bandeau « Accès rapide » permanent : raccourcis en ligne (réutilise le composant
-   .browser-shortcut-btn du sélecteur de fichiers, en disposition horizontale). */
+/* Permanent "Quick access" bar: inline shortcuts (reuses the
+   .browser-shortcut-btn component from the file chooser, in horizontal layout). */
 .files-shortcuts {
   display: flex;
   flex-wrap: wrap;
@@ -413,7 +413,7 @@ main {
   color: var(--text-muted);
 }
 
-/* Deux actions explicites par carte : Convertir + Ouvrir en 360° */
+/* Two explicit actions per card: Convert + Open in 360° */
 .file-card-actions {
   display: flex;
   gap: 8px;
@@ -574,8 +574,8 @@ progress {
   pointer-events: none;
 }
 
-/* Note affichée dans la vue principale quand elle rend une projection plein cadre
-   (cylindrique / équirect intégral / petite planète) plutôt que la sphère navigable. */
+/* Note displayed in the main view when it renders a full-frame projection
+   (cylindrical / full equirect / little planet) rather than the navigable sphere. */
 .viewer-projection-note {
   position: absolute;
   top: 10px;
@@ -608,19 +608,19 @@ progress {
   align-items: center;
 }
 
-/* Le sélecteur de fichiers passe au-dessus des autres panneaux (options, paramètres) */
+/* The file chooser goes above the other panels (options, settings) */
 #browser-overlay {
   z-index: 60;
 }
 
-/* --- Sélecteur de fichiers/dossiers --- */
+/* --- File/folder chooser --- */
 
-/* Spécificité rehaussée pour battre `.panel.small` (0,2,0) qui bridait à 480px. */
+/* Raised specificity to beat `.panel.small` (0,2,0) which clamped it to 480px. */
 .panel.small.browser-panel {
   width: min(780px, 94vw);
 }
 
-/* Corps du sélecteur : colonne "Accès rapide" + zone de navigation principale */
+/* Chooser body: "Quick access" column + main navigation area */
 .browser-body {
   display: flex;
   flex: 1;
@@ -741,20 +741,20 @@ progress {
   white-space: nowrap;
 }
 
-/* Le radical se tronque… */
+/* The basename is truncated… */
 .browser-item .browser-name-base {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
 
-/* …mais l'extension reste toujours visible en entier. */
+/* …but the extension always stays fully visible. */
 .browser-item .browser-ext {
   flex-shrink: 0;
   color: var(--muted);
 }
 
-/* Date de modification, largeur fixe pour un alignement en colonne. */
+/* Modification date, fixed width for column alignment. */
 .browser-item .browser-date {
   flex-shrink: 0;
   width: 118px;
@@ -774,8 +774,8 @@ progress {
   font-weight: 600;
 }
 
-/* Sur fenêtre étroite, on masque la date plutôt que de casser la ligne
-   (nom + extension + taille restent prioritaires). */
+/* On narrow windows, the date is hidden rather than breaking the line
+   (name + extension + size remain the priority). */
 @media (max-width: 560px) {
   .browser-item .browser-date { display: none; }
 }
@@ -966,7 +966,7 @@ input[type="range"] {
   }
 }
 
-/* --- Extraction de photos 360 --- */
+/* --- 360 photo extraction --- */
 
 .preview-layout {
   flex: 1;
@@ -1026,7 +1026,7 @@ input[type="range"] {
   font-size: 0.85rem;
 }
 
-/* Overlay du cadre de capture (projection « Photo plate ») */
+/* Capture frame overlay ("Flat photo" projection) */
 .capture-overlay {
   position: absolute;
   inset: 0;
@@ -1110,7 +1110,7 @@ input[type="range"] {
   }
 }
 
-/* --- Cadre de capture interactif --- */
+/* --- Interactive capture frame --- */
 
 .capture-frame {
   pointer-events: auto;
@@ -1144,7 +1144,7 @@ input[type="range"] {
   border-radius: 3px;
 }
 
-/* Positions et curseurs */
+/* Positions and cursors */
 .capture-handle[data-handle="nw"] { top: -7px; left: -7px; cursor: nwse-resize; }
 .capture-handle[data-handle="se"] { bottom: -7px; right: -7px; cursor: nwse-resize; }
 .capture-handle[data-handle="ne"] { top: -7px; right: -7px; cursor: nesw-resize; }
@@ -1186,7 +1186,7 @@ input[type="range"] {
   height: 26px;
 }
 
-/* --- Ratio libre --- */
+/* --- Custom ratio --- */
 
 .photo-ratio-custom {
   display: flex;
@@ -1206,7 +1206,7 @@ input[type="range"] {
   margin: 4px 0 0;
 }
 
-/* --- Stabilisation gyroscopique --- */
+/* --- Gyroscopic stabilization --- */
 
 .stabilize-field {
   gap: 10px;

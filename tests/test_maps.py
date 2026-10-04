@@ -1,4 +1,4 @@
-"""Tests de génération des cartes remap (app/core/maps.py)."""
+"""Tests for remap map generation (app/core/maps.py)."""
 
 import json
 import os
@@ -45,24 +45,24 @@ def test_generate_calibrated(tmp_path, calibration):
         assert data.shape == (344, 688)
         assert maxval == 65535
         valid = data != 65535
-        # majorité des pixels valides, et coordonnées dans la source 3840x3840
+        # majority of valid pixels, and coordinates within the 3840x3840 source
         assert valid.mean() > 0.5
         assert data[valid].max() < 3840
 
     mask, maxval = read_pgm(ms.blend_mask)
     assert mask.shape == (344, 688) and maxval == 255
-    # le masque contient les deux extrêmes (zones à un seul objectif)
+    # the mask contains both extremes (single-lens zones)
     assert (mask == 0).any() and (mask == 255).any()
-    # et des valeurs intermédiaires (dégradé de fusion)
+    # and intermediate values (blending gradient)
     assert ((mask > 20) & (mask < 235)).any()
 
 
 def test_front_lens_center(tmp_path, calibration):
-    """La direction de l'objectif avant (lenses[1]) doit tomber près de (cx,cy)."""
+    """The front lens direction (lenses[1]) must land near (cx,cy)."""
     ms = generate_remap_maps(calibration, 688, 344, str(tmp_path))
     x1, _ = read_pgm(ms.xmaps[1])
     y1, _ = read_pgm(ms.ymaps[1])
-    # avant = longitude -90° dans la sortie (décalage yaw +90°) -> colonne W/4
+    # front = longitude -90° in the output (yaw offset +90°) -> column W/4
     col, row = 688 // 4, 344 // 2
     lens = calibration["lenses"][1]
     assert abs(int(x1[row, col]) - lens["cx"]) < 40

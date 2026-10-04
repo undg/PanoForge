@@ -1,4 +1,4 @@
-"""Tests du constructeur de commandes ffmpeg (app/core/stitch.py)."""
+"""Tests for the ffmpeg command builder (app/core/stitch.py)."""
 
 import os
 import sys
@@ -36,7 +36,7 @@ def test_v360_basic():
     assert "-progress" in cmd and cmd[cmd.index("-progress") + 1] == "pipe:1"
     assert "-nostats" in cmd
     assert "libx265" in cmd and "hvc1" in cmd
-    # audio copié
+    # audio copied
     assert "0:a?" in cmd and "copy" in cmd
 
 
@@ -64,11 +64,11 @@ def test_calibrated_graph():
 
 def test_mode_auto():
     opts = StitchOptions(out_w=3840, encoder="cpu", mode="auto")
-    # sans cartes -> v360
+    # without maps -> v360
     assert "v360=" in graph_of(build_command(IN, OUT, opts, None))
-    # cartes calibrées -> calibrated
+    # calibrated maps -> calibrated
     assert "maskedmerge" in graph_of(build_command(IN, OUT, opts, fake_mapset()))
-    # cartes fallback (géométrie idéale) -> v360 préféré
+    # fallback maps (ideal geometry) -> v360 preferred
     ms = fake_mapset(calibrated=False)
     assert "v360=" in graph_of(build_command(IN, OUT, opts, ms))
 

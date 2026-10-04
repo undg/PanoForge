@@ -1,10 +1,10 @@
-"""Tests de app/core/spherical.py — métadonnées sphériques V1 (uuid GSpherical)
-+ V2 (sv3d/proj/equi) et export GPX fenêtré (side-car).
+"""Tests for app/core/spherical.py — spherical metadata V1 (uuid GSpherical)
++ V2 (sv3d/proj/equi) and windowed GPX export (side-car).
 
-Vérifie que ffprobe expose bien le side data "Spherical Mapping" (V2) après
-injection, que la boîte uuid V1 est présente et contient le XML attendu, que
-le fichier reste décodable (vidéo, et vidéo+audio), et que l'enchaînement
-spherical -> camm (ordre du pipeline réel, cf. SPEC.md) fonctionne toujours.
+Verifies that ffprobe indeed exposes the "Spherical Mapping" side data (V2) after
+injection, that the V1 uuid box is present and contains the expected XML, that
+the file remains decodable (video, and video+audio), and that the
+spherical -> camm sequence (real pipeline order, see SPEC.md) still works.
 """
 import json
 import os
@@ -20,7 +20,7 @@ FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
 EXIFTOOL = shutil.which("exiftool")
 
-pytestmark = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="ffmpeg/ffprobe absents du système")
+pytestmark = pytest.mark.skipif(not (FFMPEG and FFPROBE), reason="ffmpeg/ffprobe absent from the system")
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "track_streetview.gpx")
 VIDEO_START = datetime(2026, 7, 7, 20, 0, 0, tzinfo=timezone.utc)
@@ -49,7 +49,7 @@ def _ffprobe_json(path: str) -> dict:
 
 
 def _find_v1_uuid_xml(mp4_path: str) -> str:
-    """Relit la boîte uuid V1 directement (indépendant de ffprobe/exiftool)."""
+    """Re-reads the V1 uuid box directly (independent of ffprobe/exiftool)."""
     data = open(mp4_path, "rb").read()
 
     def read_hdr(off):
@@ -88,7 +88,7 @@ def _find_v1_uuid_xml(mp4_path: str) -> str:
                 extended_type = data[body:body + 16]
                 if extended_type == spherical.V1_UUID:
                     return data[body + 16:off2 + size2].decode("utf-8")
-    raise AssertionError("boîte uuid V1 introuvable dans la piste vidéo")
+    raise AssertionError("V1 uuid box not found in the video track")
 
 
 @pytest.mark.parametrize("with_audio,faststart", [(False, False), (False, True), (True, False)])
@@ -105,7 +105,7 @@ def test_inject_spherical_readable_by_ffprobe(tmp_path, with_audio, faststart):
     video_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
     side_data = video_stream.get("side_data_list") or []
     spherical_sd = next((sd for sd in side_data if sd.get("side_data_type") == "Spherical Mapping"), None)
-    assert spherical_sd is not None, f"pas de side data sphérique : {side_data}"
+    assert spherical_sd is not None, f"no spherical side data: {side_data}"
     assert spherical_sd["projection"] == "equirectangular"
 
     if with_audio:
@@ -131,8 +131,8 @@ def test_inject_spherical_v1_uuid_xml_content(tmp_path):
 
 
 def test_inject_spherical_then_camm_pipeline_order(tmp_path):
-    """Ordre réel du pipeline (SPEC.md) : inject_spherical() d'abord, puis
-    resample()+inject_camm() sur le résultat. Les deux doivent survivre."""
+    """Real pipeline order (SPEC.md): inject_spherical() first, then
+    resample()+inject_camm() on the result. Both must survive."""
     src = str(tmp_path / "src.mp4")
     sph = str(tmp_path / "sph.mp4")
     final = str(tmp_path / "final.mp4")
@@ -175,7 +175,7 @@ def test_export_windowed_gpx_writes_valid_windowed_track(tmp_path):
     assert reparsed[-1].t == VIDEO_START + timedelta(seconds=DURATION_S)
 
 
-@pytest.mark.skipif(not EXIFTOOL, reason="exiftool absent du système")
+@pytest.mark.skipif(not EXIFTOOL, reason="exiftool absent from the system")
 def test_inject_spherical_readable_by_exiftool(tmp_path):
     src = str(tmp_path / "src.mp4")
     out = str(tmp_path / "out.mp4")

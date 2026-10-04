@@ -1,4 +1,4 @@
-"""Tests d'intégration de l'API REST (FastAPI TestClient)."""
+"""REST API integration tests (FastAPI TestClient)."""
 import os
 import time
 
@@ -20,7 +20,7 @@ def test_post_config_updates_dirs(client, isolated_config, tmp_path):
     r = client.post("/api/config", json={"output_dir": str(new_out)})
     assert r.status_code == 200
     assert r.json()["output_dir"] == str(new_out)
-    # persiste bien pour un appel suivant
+    # persists correctly for a following call
     r2 = client.get("/api/config")
     assert r2.json()["output_dir"] == str(new_out)
 
@@ -39,41 +39,41 @@ def test_files_dir_outside_source_forbidden(client, isolated_config, tmp_path):
 
 def test_media_range_and_traversal(client, isolated_config):
     out_dir = isolated_config["output_dir"]
-    payload = bytes(range(256)) * 4  # 1024 octets
+    payload = bytes(range(256)) * 4  # 1024 bytes
     f = out_dir / "clip.mp4"
     f.write_bytes(payload)
 
-    # sans Range : fichier complet
+    # without Range: full file
     r_full = client.get("/api/media", params={"path": str(f)})
     assert r_full.status_code == 200
     assert r_full.content == payload
     assert r_full.headers["accept-ranges"] == "bytes"
 
-    # avec Range : contenu partiel 206
+    # with Range: partial content 206
     r_partial = client.get("/api/media", params={"path": str(f)}, headers={"Range": "bytes=10-19"})
     assert r_partial.status_code == 206
     assert r_partial.content == payload[10:20]
     assert r_partial.headers["content-range"] == f"bytes 10-19/{len(payload)}"
 
-    # suffix range (derniers octets)
+    # suffix range (last bytes)
     r_suffix = client.get("/api/media", params={"path": str(f)}, headers={"Range": "bytes=-5"})
     assert r_suffix.status_code == 206
     assert r_suffix.content == payload[-5:]
 
-    # traversal hors des dossiers autorisés -> 403
+    # traversal outside allowed folders -> 403
     r_forbidden = client.get("/api/media", params={"path": "/etc/passwd"})
     assert r_forbidden.status_code == 403
 
 
 def test_config_migrates_legacy_output_dir(tmp_path, monkeypatch):
-    """L'ancien défaut exact (~/Videos/osmo360) est migré vers le nouveau défaut xdg."""
+    """The exact old default (~/Videos/osmo360) is migrated to the new xdg default."""
     import json
 
     import pytest
     from app import config as config_module
 
     if config_module.LEGACY_OUTPUT_DIR == config_module.DEFAULT_OUTPUT_DIR:
-        pytest.skip("pas de migration à tester sur ce système")
+        pytest.skip("no migration to test on this system")
 
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps({
@@ -89,8 +89,8 @@ def test_config_migrates_legacy_output_dir(tmp_path, monkeypatch):
 
     cfg = config_module.get_config()
     assert cfg.output_dir == config_module.DEFAULT_OUTPUT_DIR
-    assert cfg.source_dir == "/somewhere/dcim"  # le reste est conservé
-    # migration persistée sur disque
+    assert cfg.source_dir == "/somewhere/dcim"  # the rest is preserved
+    # migration persisted to disk
     assert json.loads(cfg_path.read_text())["output_dir"] == config_module.DEFAULT_OUTPUT_DIR
 
 
@@ -113,8 +113,8 @@ def test_config_does_not_migrate_custom_output_dir(tmp_path, monkeypatch):
 
 
 def test_migrate_legacy_dirs_renames_config_and_cache(tmp_path, monkeypatch):
-    """Renommage osmo360-studio → panoforge : si l'ancien dossier existe et que le
-    nouveau non, il est déplacé (config préservée) ; jamais d'écrasement sinon."""
+    """Rename osmo360-studio → panoforge: if the old folder exists and the
+    new one does not, it is moved (config preserved); otherwise never overwrites."""
     from app import config as config_module
 
     old_cfg = tmp_path / "old" / "osmo360-studio"
@@ -139,7 +139,7 @@ def test_migrate_legacy_dirs_renames_config_and_cache(tmp_path, monkeypatch):
 
 
 def test_migrate_legacy_dirs_never_overwrites_existing_new(tmp_path, monkeypatch):
-    """Si le nouveau dossier existe déjà, l'ancien n'est pas déplacé (aucune perte)."""
+    """If the new folder already exists, the old one is not moved (no loss)."""
     from app import config as config_module
 
     old_cfg = tmp_path / "old" / "osmo360-studio"
@@ -156,12 +156,12 @@ def test_migrate_legacy_dirs_never_overwrites_existing_new(tmp_path, monkeypatch
 
     config_module._migrate_legacy_dirs()
 
-    # les deux subsistent, le nouveau est intact
+    # both remain, the new one is intact
     assert old_cfg.exists() and (new_cfg / "config.json").read_text() == '{"new": true}'
 
 
 def test_browse_navigation_filter_and_403(client, tmp_path, monkeypatch):
-    # Path.home() lit $HOME : on le redirige vers tmp_path pour le test
+    # Path.home() reads $HOME: redirect it to tmp_path for the test
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / "Docs").mkdir()
     (tmp_path / "Alpha").mkdir()
@@ -173,32 +173,32 @@ def test_browse_navigation_filter_and_403(client, tmp_path, monkeypatch):
 
     home_real = os.path.realpath(tmp_path)
 
-    # défaut : dir = home, parent = null (racine autorisée la plus haute),
-    # files vide sans filter (choix de dossier)
+    # default: dir = home, parent = null (highest allowed root),
+    # files empty without filter (folder selection)
     r = client.get("/api/browse")
     assert r.status_code == 200
     body = r.json()
     assert body["dir"] == home_real
     assert body["parent"] is None
-    assert [d["name"] for d in body["dirs"]] == ["Alpha", "Docs"]  # cachés exclus, tri alpha
+    assert [d["name"] for d in body["dirs"]] == ["Alpha", "Docs"]  # hidden excluded, alpha sort
     assert body["files"] == []
 
-    # filtre osv insensible à la casse ; fichiers cachés exclus
+    # osv filter case-insensitive; hidden files excluded
     r2 = client.get("/api/browse", params={"filter": "osv"})
     files = r2.json()["files"]
     assert [f["name"] for f in files] == ["CLIP_A.OSV", "clip_b.osv"]
     assert all(f["size_bytes"] > 0 and f["path"].startswith(home_real) for f in files)
 
-    # filtre gpx
+    # gpx filter
     r3 = client.get("/api/browse", params={"filter": "gpx"})
     assert [f["name"] for f in r3.json()["files"]] == ["trace.gpx"]
 
-    # sous-dossier : parent = home
+    # subfolder: parent = home
     r4 = client.get("/api/browse", params={"dir": str(tmp_path / "Docs")})
     assert r4.status_code == 200
     assert r4.json()["parent"] == home_real
 
-    # hors périmètre -> 403 ; inexistant sous home -> 404
+    # out of scope -> 403; nonexistent under home -> 404
     assert client.get("/api/browse", params={"dir": "/etc"}).status_code == 403
     assert client.get("/api/browse", params={"dir": "/"}).status_code == 403
     assert client.get("/api/browse", params={"dir": str(tmp_path / "nope")}).status_code == 404
@@ -210,11 +210,11 @@ def test_browse_media_root_allowed(client):
         pytest.skip("/run/media absent")
     r = client.get("/api/browse", params={"dir": "/run/media"})
     assert r.status_code == 200
-    assert r.json()["parent"] is None  # racine autorisée la plus haute
+    assert r.json()["parent"] is None  # highest allowed root
 
 
 # ---------------------------------------------------------------------------
-# /api/browse/roots — accès rapide volumes amovibles / caméra (voir SPEC.md)
+# /api/browse/roots — quick access removable volumes / camera (see SPEC.md)
 # ---------------------------------------------------------------------------
 
 def test_browse_roots_structure_and_home(client, isolated_config):
@@ -234,7 +234,7 @@ def test_browse_roots_structure_and_home(client, isolated_config):
     assert len(home_entries) == 1
     assert home_entries[0]["path"] == os.path.realpath(str(os.path.expanduser("~")))
 
-    # source/output configurés (isolated_config) remontés
+    # configured source/output (isolated_config) reported
     kinds = {s["kind"] for s in shortcuts}
     assert "source" in kinds
     assert "output" in kinds
@@ -243,7 +243,7 @@ def test_browse_roots_structure_and_home(client, isolated_config):
     assert source_entry["path"] == os.path.realpath(str(isolated_config["source_dir"]))
     assert output_entry["path"] == os.path.realpath(str(isolated_config["output_dir"]))
 
-    # pas de doublons de chemin réel
+    # no duplicate real paths
     paths = [s["path"] for s in shortcuts]
     assert len(paths) == len(set(paths))
 
@@ -253,7 +253,7 @@ def test_browse_roots_detects_real_sd_card(client, isolated_config):
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     sd_path = f"/run/media/{user}/SD_Card"
     if not user or not os.path.isdir(sd_path):
-        pytest.skip("carte SD non montée sous /run/media/$USER sur cette machine")
+        pytest.skip("SD card not mounted under /run/media/$USER on this machine")
 
     r = client.get("/api/browse/roots")
     assert r.status_code == 200
@@ -264,8 +264,8 @@ def test_browse_roots_detects_real_sd_card(client, isolated_config):
 
 
 def test_browse_roots_gvfs_absent_tolerated(client, isolated_config, monkeypatch):
-    """Aucun montage gvfs (dossier inexistant) : pas d'erreur, simplement pas
-    d'entrée kind=camera."""
+    """No gvfs mount (nonexistent folder): no error, simply no
+    kind=camera entry."""
     from app import config as config_module
 
     monkeypatch.setattr(config_module, "gvfs_root", lambda: "/nonexistent/gvfs/xyz")
@@ -276,7 +276,7 @@ def test_browse_roots_gvfs_absent_tolerated(client, isolated_config, monkeypatch
 
 
 def test_browse_roots_gvfs_empty_tolerated(client, isolated_config, monkeypatch, tmp_path):
-    """Dossier gvfs présent mais vide (ou sans montage mtp:/gphoto2:) : toléré."""
+    """gvfs folder present but empty (or without mtp:/gphoto2: mount): tolerated."""
     from app import config as config_module
 
     empty_gvfs = tmp_path / "gvfs"
@@ -289,14 +289,14 @@ def test_browse_roots_gvfs_empty_tolerated(client, isolated_config, monkeypatch,
 
 
 def test_browse_roots_detects_mtp_camera_mount(client, isolated_config, monkeypatch, tmp_path):
-    """Montage MTP simulé sous un faux gvfs : remonté en kind=camera."""
+    """Simulated MTP mount under a fake gvfs: reported as kind=camera."""
     from app import config as config_module
 
     fake_gvfs = tmp_path / "gvfs"
     fake_gvfs.mkdir()
     mtp_dir = fake_gvfs / "mtp:host=some_device"
     mtp_dir.mkdir()
-    (fake_gvfs / "smb-share:server=nas,share=data").mkdir()  # autre protocole : ignoré
+    (fake_gvfs / "smb-share:server=nas,share=data").mkdir()  # other protocol: ignored
 
     monkeypatch.setattr(config_module, "gvfs_root", lambda: str(fake_gvfs))
     r = client.get("/api/browse/roots")
@@ -309,21 +309,21 @@ def test_browse_roots_detects_mtp_camera_mount(client, isolated_config, monkeypa
 
 
 def test_browse_gvfs_root_allowed(client):
-    """La racine /run/user/<uid>/gvfs est acceptée par /api/browse (navigation
-    vers un montage caméra MTP)."""
+    """The /run/user/<uid>/gvfs root is accepted by /api/browse (navigation
+    to an MTP camera mount)."""
     import pytest
 
     gvfs = f"/run/user/{os.getuid()}/gvfs"
     if not os.path.isdir(gvfs):
-        pytest.skip("gvfs absent sur cette machine")
+        pytest.skip("gvfs absent on this machine")
     r = client.get("/api/browse", params={"dir": gvfs})
     assert r.status_code == 200
-    assert r.json()["parent"] is None  # racine autorisée la plus haute
+    assert r.json()["parent"] is None  # highest allowed root
 
 
 def test_preview_proxy_generation_and_serving(client, isolated_config):
-    """Flux proxy d'aperçu complet, sans dépendre de la carte SD : sortie de job
-    simulée par une petite vidéo synthétique -> _generate_preview -> preview_url
+    """Full preview proxy flow, without depending on the SD card: job output
+    simulated by a small synthetic video -> _generate_preview -> preview_url
     -> GET /api/media (Range) -> ffprobe h264/yuv420p/1920x960 + faststart."""
     import json
     import subprocess
@@ -348,11 +348,11 @@ def test_preview_proxy_generation_and_serving(client, isolated_config):
     assert job.preview_error is None, job.preview_error
     assert job.preview_url and job.preview_url.startswith("/api/media?path=")
 
-    # servi par /api/media avec Range
+    # served by /api/media with Range
     r = client.get(job.preview_url, headers={"Range": "bytes=0-127"})
     assert r.status_code == 206
 
-    # caractéristiques décodables navigateur
+    # browser-decodable characteristics
     preview_path = parse_qs(urlparse(job.preview_url).query)["path"][0]
     probe = json.loads(subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -364,12 +364,12 @@ def test_preview_proxy_generation_and_serving(client, isolated_config):
     assert probe["pix_fmt"] == "yuv420p"
     assert (probe["width"], probe["height"]) == (1920, 960)
 
-    # faststart : l'atome moov précède mdat
+    # faststart: the moov atom precedes mdat
     with open(preview_path, "rb") as fp:
         head = fp.read(64 * 1024)
     assert head.find(b"moov") != -1 and head.find(b"moov") < head.find(b"mdat")
 
-    # idempotence : un second appel réutilise le cache et redonne une URL
+    # idempotence: a second call reuses the cache and returns a URL again
     job2 = Job(id="testprev2", input="ignored.OSV", output=fake_output, options={},
                status="running", progress=0.95)
     manager._generate_preview(job2, 1.0)
@@ -420,7 +420,7 @@ def test_thumb_real_example(client, isolated_config_real_source):
 
 @requires_example_file
 def test_job_lifecycle_queued_to_terminal(client, isolated_config_real_source):
-    # options légères (3840, interp rapide, mode v360) pour garder le test court
+    # light options (3840, fast interp, v360 mode) to keep the test short
     r = client.post("/api/jobs", json={
         "inputs": [EXAMPLE_OSV],
         "options": {"out_w": 3840, "interp": "line", "mode": "v360"},
@@ -434,24 +434,24 @@ def test_job_lifecycle_queued_to_terminal(client, isolated_config_real_source):
         jobs = client.get("/api/jobs").json()
         job = next(j for j in jobs if j["id"] == job_id)
         status = job["status"]
-        assert "preview_url" in job  # champ toujours exposé (null tant qu'absent)
+        assert "preview_url" in job  # field always exposed (null while absent)
         if status in ("done", "error", "cancelled"):
             break
         time.sleep(0.3)
 
     assert status in ("done", "error", "cancelled")
     if status == "error":
-        assert job["error"]  # message explicite, pas un crash silencieux
+        assert job["error"]  # explicit message, not a silent crash
     if status == "done":
         assert os.path.isfile(job["output"])
         assert job["progress"] == 1.0
-        # proxy d'aperçu : soit une URL /api/media lisible (Range OK),
-        # soit un échec non bloquant documenté dans preview_error
+        # preview proxy: either a readable /api/media URL (Range OK),
+        # or a non-blocking failure documented in preview_error
         if job["preview_url"]:
             assert job["preview_url"].startswith("/api/media?path=")
             r_prev = client.get(job["preview_url"], headers={"Range": "bytes=0-255"})
             assert r_prev.status_code == 206
-            # le proxy doit être décodable navigateur : h264 yuv420p 1920x960
+            # the proxy must be browser-decodable: h264 yuv420p 1920x960
             import json
             import subprocess
             from urllib.parse import parse_qs, unquote, urlparse

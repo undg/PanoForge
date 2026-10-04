@@ -1,23 +1,23 @@
-"""Extraction de photos depuis les vidéos/photos 360 (voir SPEC.md, section
-« Extraction de photos 360 »).
+"""Photo extraction from 360 videos/photos (see SPEC.md, section
+"360 photo extraction").
 
-Trois sources :
-  - MP4 360° converti : seek précis (``-ss`` avant ``-i``) puis 1 frame ;
-  - .OSV brut : stitching calibré d'UNE frame pleine résolution en réutilisant
-    ``maps.generate_remap_maps`` + le graphe remap/maskedmerge de stitch.py
-    (fallback v360 baseline si pas de calibration) — les cartes sont mises en
-    cache disque par (fichier, résolution) ;
-  - JPEG 360° de la caméra (équirect 2:1) : utilisé tel quel.
+Three sources:
+  - converted 360° MP4: accurate seek (``-ss`` before ``-i``) then 1 frame;
+  - raw .OSV: calibrated stitching of ONE full resolution frame reusing
+    ``maps.generate_remap_maps`` + the remap/maskedmerge graph from stitch.py
+    (v360 baseline fallback if no calibration) — maps are cached on disk per
+    (file, resolution);
+  - camera 360° JPEG (equirect 2:1): used as is.
 
-Reprojections (ffmpeg v360, input=e) : ``flat`` (perspective sans étirement,
-v_fov calculé depuis h_fov et le ratio), ``cylindrical`` (tour complet 360°),
-``equirect360`` (équirect 2:1 + XMP GPano injecté pour une photo sphérique
-interactive), ``littleplanet`` (stéréographique regard vers le bas).
+Reprojections (ffmpeg v360, input=e): ``flat`` (perspective without stretching,
+v_fov computed from h_fov and the ratio), ``cylindrical`` (full 360° turn),
+``equirect360`` (equirect 2:1 + GPano XMP injected for an interactive spherical
+photo), ``littleplanet`` (stereographic looking down).
 
-Remarque .LRF : la caméra écrit un fichier basse résolution ``.LRF`` à côté de
-chaque ``.OSV``. Il pourrait servir de source rapide pour ``nav_proxy`` (si son
-contenu est bien un dual-fisheye léger) mais n'a pas pu être testé (non copié
-avec l'échantillon) : le proxy est donc toujours généré depuis l'OSV lui-même.
+.LRF note: the camera writes a low resolution ``.LRF`` file next to each
+``.OSV``. It could serve as a fast source for ``nav_proxy`` (if its content is
+indeed a light dual-fisheye) but could not be tested (not copied with the
+sample): the proxy is therefore always generated from the OSV itself.
 """
 from __future__ import annotations
 
@@ -28,13 +28,13 @@ import os
 import struct
 import subprocess
 
-# Ratios autorisés pour la projection « flat » (largeur:hauteur).
+# Ratios allowed for the "flat" projection (width:height).
 RATIOS: dict[str, tuple[int, int]] = {
     "16:9": (16, 9), "21:9": (21, 9), "32:9": (32, 9),
     "4:3": (4, 3), "1:1": (1, 1), "9:16": (9, 16),
 }
 
-# Filtre v360 baseline (identique à stitch.py mode v360).
+# v360 baseline filter (identical to stitch.py v360 mode).
 _V360_BASE = ("v360=input=dfisheye:output=e:ih_fov=190:iv_fov=190:yaw=90:"
               "w={w}:h={h}:interp={interp}")
 
@@ -42,11 +42,11 @@ XMP_MARKER = b"http://ns.adobe.com/xap/1.0/\x00"
 
 
 class PhotoError(Exception):
-    """Erreur explicite d'extraction photo (destinée à l'API : 400/422)."""
+    """Explicit photo extraction error (intended for the API: 400/422)."""
 
 
 # ---------------------------------------------------------------------------
-# Aides
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _even(n: float) -> int:
@@ -58,15 +58,15 @@ def _run(cmd: list[str], timeout: int = 120, what: str = "ffmpeg") -> None:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:
-        raise PhotoError(f"{cmd[0]} introuvable sur le système") from exc
+        raise PhotoError(f"{cmd[0]} not found on the system") from exc
     except subprocess.TimeoutExpired as exc:
-        raise PhotoError(f"{what} : délai dépassé") from exc
+        raise PhotoError(f"{what}: timeout") from exc
     if proc.returncode != 0:
-        raise PhotoError(f"{what} a échoué : {proc.stderr.strip()[-500:]}")
+        raise PhotoError(f"{what} failed: {proc.stderr.strip()[-500:]}")
 
 
 def probe_dims(path: str) -> tuple[int, int]:
-    """(largeur, hauteur) du premier flux vidéo/image."""
+    """(width, height) of the first video/image stream."""
     try:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -76,11 +76,11 @@ def probe_dims(path: str) -> tuple[int, int]:
         return int(s["width"]), int(s["height"])
     except (subprocess.TimeoutExpired, KeyError, IndexError, ValueError,
             json.JSONDecodeError, FileNotFoundError) as exc:
-        raise PhotoError(f"dimensions illisibles : {path}") from exc
+        raise PhotoError(f"unreadable dimensions: {path}") from exc
 
 
 def _jpeg_q(quality: int) -> str:
-    """quality 1..100 -> échelle mjpeg -q:v (2 = quasi sans perte, 31 = pire)."""
+    """quality 1..100 -> mjpeg -q:v scale (2 = almost lossless, 31 = worst)."""
     return str(max(2, min(31, round((100 - int(quality)) * 31 / 100))))
 
 
@@ -92,20 +92,20 @@ def _source_kind(path: str) -> str:
         return "mp4"
     if ext in (".jpg", ".jpeg"):
         return "jpg"
-    raise PhotoError(f"type de source non géré : {ext or path}")
+    raise PhotoError(f"unsupported source type: {ext or path}")
 
 
 def default_out_w(source_path: str) -> int:
-    """Largeur équirect max de la source (défaut de out_w côté API)."""
+    """Max equirect width of the source (default for out_w on the API side)."""
     kind = _source_kind(source_path)
     w, h = probe_dims(source_path)
     if kind == "osv":
-        return 2 * w  # deux fisheyes 3840 -> équirect 7680
+        return 2 * w  # two 3840 fisheyes -> 7680 equirect
     return w
 
 
 # ---------------------------------------------------------------------------
-# Cache des cartes remap (par fichier + résolution)
+# Remap maps cache (per file + resolution)
 # ---------------------------------------------------------------------------
 
 def _maps_cache_dir() -> str:
@@ -116,10 +116,10 @@ def _maps_cache_dir() -> str:
 
 
 def _cached_mapset(osv_path: str, out_w: int):
-    """MapSet (éventuellement non calibré) depuis le cache disque, sinon généré.
+    """MapSet (possibly uncalibrated) from the disk cache, otherwise generated.
 
-    Clé de cache = (chemin, mtime, résolution). Retourne None si même le
-    fallback n'a pas pu être produit (modules absents…)."""
+    Cache key = (path, mtime, resolution). Returns None if even the
+    fallback could not be produced (modules missing...)."""
     try:
         from app.core.maps import MapSet, generate_remap_maps
     except ImportError:
@@ -142,7 +142,7 @@ def _cached_mapset(osv_path: str, out_w: int):
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
             pass
 
-    # (Re)génération : calibration extraite de l'OSV, puis cartes.
+    # (Re)generation: calibration extracted from the OSV, then maps.
     from app.core import osv as osv_mod
     os.makedirs(cdir, exist_ok=True)
     try:
@@ -162,14 +162,14 @@ def _cached_mapset(osv_path: str, out_w: int):
 
 
 # ---------------------------------------------------------------------------
-# 1 frame équirect pleine résolution
+# 1 full resolution equirect frame
 # ---------------------------------------------------------------------------
 
 def get_equirect_frame(source_path: str, time_s: float, workdir: str,
                        out_w: int | None = None) -> str:
-    """PNG (ou JPEG source) équirectangulaire pleine résolution à ``time_s``."""
+    """Full resolution equirectangular PNG (or source JPEG) at ``time_s``."""
     if not os.path.isfile(source_path):
-        raise PhotoError(f"fichier introuvable : {source_path}")
+        raise PhotoError(f"file not found: {source_path}")
     kind = _source_kind(source_path)
     os.makedirs(workdir, exist_ok=True)
     out_png = os.path.join(workdir, "equirect.png")
@@ -178,23 +178,23 @@ def get_equirect_frame(source_path: str, time_s: float, workdir: str,
         w, h = probe_dims(source_path)
         if h == 0 or abs(w / h - 2.0) > 0.04:
             raise PhotoError(
-                f"la photo {os.path.basename(source_path)} n'est pas équirectangulaire "
-                f"2:1 ({w}x{h}) — extraction impossible")
-        return source_path  # utilisée telle quelle
+                f"photo {os.path.basename(source_path)} is not equirectangular "
+                f"2:1 ({w}x{h}) — extraction failed")
+        return source_path  # used as is
 
-    # PNG à compression minimale : l'intermédiaire 8K passe de ~11 s à ~6 s.
+    # PNG with minimal compression: the 8K intermediate goes from ~11 s to ~6 s.
     png_fast = ["-compression_level", "1"]
 
     if kind == "mp4":
         cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0.0, time_s):.3f}",
                "-i", source_path, "-map", "0:v:0", "-frames:v", "1",
                *png_fast, out_png]
-        _run(cmd, timeout=120, what="extraction de frame MP4")
+        _run(cmd, timeout=120, what="MP4 frame extraction")
         if not os.path.isfile(out_png):
-            raise PhotoError(f"aucune frame à t={time_s:.2f}s (durée dépassée ?)")
+            raise PhotoError(f"no frame at t={time_s:.2f}s (duration exceeded?)")
         return out_png
 
-    # OSV : stitching d'une frame — calibré si cartes dispo, sinon v360 baseline.
+    # OSV: stitching of one frame — calibrated if maps available, otherwise v360 baseline.
     w_fish, _ = probe_dims(source_path)
     ew = _even(out_w or 2 * w_fish)
     eh = ew // 2
@@ -213,7 +213,7 @@ def get_equirect_frame(source_path: str, time_s: float, workdir: str,
         )
         cmd += ["-filter_complex", graph, "-map", "[v]", "-frames:v", "1",
                 *png_fast, out_png]
-        _run(cmd, timeout=180, what="stitching calibré d'une frame OSV")
+        _run(cmd, timeout=180, what="calibrated stitching of an OSV frame")
     else:
         graph = ("[0:0][0:1]hstack[s];[s]"
                  + _V360_BASE.format(w=ew, h=eh, interp="lanczos")
@@ -221,9 +221,9 @@ def get_equirect_frame(source_path: str, time_s: float, workdir: str,
         cmd = ["ffmpeg", "-y", "-v", "error", *ss, "-i", source_path,
                "-filter_complex", graph, "-map", "[v]", "-frames:v", "1",
                *png_fast, out_png]
-        _run(cmd, timeout=180, what="stitching v360 d'une frame OSV")
+        _run(cmd, timeout=180, what="v360 stitching of an OSV frame")
     if not os.path.isfile(out_png):
-        raise PhotoError(f"aucune frame à t={time_s:.2f}s (durée dépassée ?)")
+        raise PhotoError(f"no frame at t={time_s:.2f}s (duration exceeded?)")
     return out_png
 
 
@@ -232,7 +232,7 @@ def get_equirect_frame(source_path: str, time_s: float, workdir: str,
 # ---------------------------------------------------------------------------
 
 def _parse_ratio(ratio: str) -> tuple[float, float]:
-    """Préréglage (16:9…) ou ratio libre « a:b » (a, b > 0, a/b dans [0.2, 8])."""
+    """Preset (16:9...) or custom ratio "a:b" (a, b > 0, a/b in [0.2, 8])."""
     if ratio in RATIOS:
         return RATIOS[ratio]
     parts = str(ratio).split(":")
@@ -242,59 +242,59 @@ def _parse_ratio(ratio: str) -> tuple[float, float]:
         a, b = float(parts[0]), float(parts[1])
     except ValueError:
         raise PhotoError(
-            f"ratio invalide : « {ratio} » — préréglage ({', '.join(RATIOS)}) "
-            "ou forme « a:b » avec a et b numériques > 0 attendus") from None
+            f"invalid ratio: \"{ratio}\" — preset ({', '.join(RATIOS)}) "
+            "or form \"a:b\" with numeric a and b > 0 expected") from None
     if not (a > 0 and b > 0):
-        raise PhotoError(f"ratio invalide : « {ratio} » — a et b doivent être > 0")
+        raise PhotoError(f"invalid ratio: \"{ratio}\" — a and b must be > 0")
     if not (0.2 <= a / b <= 8.0):
         raise PhotoError(
-            f"ratio hors bornes : « {ratio} » (a/b = {a / b:.3g}, autorisé : 0.2 à 8)")
+            f"ratio out of bounds: \"{ratio}\" (a/b = {a / b:.3g}, allowed: 0.2 to 8)")
     return a, b
 
 
 def _norm180(a: float) -> float:
-    """Ramène un angle en degrés dans [-180, 180) (v360 refuse yaw hors bornes)."""
+    """Wrap an angle in degrees into [-180, 180) (v360 rejects out-of-bounds yaw)."""
     return ((float(a) + 180.0) % 360.0) - 180.0
 
 
 # ---------------------------------------------------------------------------
-# Convention d'angles : visionneuse (champs yaw/pitch/roll + cadre bleu) → v360
+# Angle convention: viewer (yaw/pitch/roll fields + blue frame) -> v360
 # ---------------------------------------------------------------------------
 #
-# Les champs yaw/pitch/roll (et « yaw de départ » / « rotation ») sont exprimés
-# dans la convention de la visionneuse WebGL (viewer.js), c.-à-d. ce que l'aperçu
-# plein cadre montre à l'utilisateur. ffmpeg v360 utilise une convention
-# DIFFÉRENTE ; sans conversion, la photo extraite ne correspond pas au cadre bleu
-# (bug historique : yaw décalé de 180°). Le mapping ci-dessous a été mesuré
-# empiriquement (voir work/photofix/) en comparant, sur le MÊME équirect, le rendu
-# de la visionneuse et celui de v360 :
+# The yaw/pitch/roll fields (and "start yaw" / "rotation") are expressed
+# in the WebGL viewer convention (viewer.js), i.e. what the full-frame
+# preview shows the user. ffmpeg v360 uses a
+# DIFFERENT convention; without conversion, the extracted photo does not match the blue frame
+# (historical bug: yaw offset by 180°). The mapping below was measured
+# empirically (see work/photofix/) by comparing, on the SAME equirect, the viewer
+# render and the v360 render:
 #
-#   • flat (sphère three.js) : la sphère navigable échantillonne l'équirect à
-#     u = yaw/360 (yaw=0 → BORD GAUCHE de l'équirect), alors que v360 output=flat
-#     vise le CENTRE (u = 0.5) à yaw=0. D'où un décalage de 180° en lacet, sans
-#     miroir. Le tangage est identique (positif = vers le haut de part et d'autre).
-#     Le roulis est INVERSÉ (la caméra three.js applique rotateZ(-roll), soit une
-#     rotation image opposée à celle de v360).
-#         yaw_v360 = yaw + 180 ;  pitch_v360 = pitch ;  roll_v360 = -roll
-#     (preuve : work/photofix/sweep.jpg — le lever de soleil cadré à yaw=-147,1
-#      côté visionneuse est bien produit par v360 yaw=+32,9 = -147,1 + 180.)
+#   • flat (three.js sphere): the navigable sphere samples the equirect at
+#     u = yaw/360 (yaw=0 → LEFT EDGE of the equirect), whereas v360 output=flat
+#     aims at the CENTER (u = 0.5) at yaw=0. Hence a 180° yaw offset, without
+#     mirroring. Pitch is identical (positive = upward on both sides).
+#     Roll is INVERTED (the three.js camera applies rotateZ(-roll), i.e. an
+#     image rotation opposite to that of v360).
+#         yaw_v360 = yaw + 180;  pitch_v360 = pitch;  roll_v360 = -roll
+#     (proof: work/photofix/sweep.jpg — the sunrise framed at yaw=-147.1
+#      on the viewer side is indeed produced by v360 yaw=+32.9 = -147.1 + 180.)
 #
-#   • cylindrical (shader projpreview) : le shader échantillonne u = 0.5 + yaw/360,
-#     MÊME origine que v360 output=cylindrical. Aucun décalage.
+#   • cylindrical (projpreview shader): the shader samples u = 0.5 + yaw/360,
+#     SAME origin as v360 output=cylindrical. No offset.
 #         yaw_v360 = yaw
 #
-#   • littleplanet (shader stéréographique nadir) : le shader vise le nadir avec un
-#     azimut lon = atan2(y,x) + rotation, de CHIRALITÉ INVERSE à v360 output=sg.
-#     Pour reproduire exactement l'aperçu il faut un miroir horizontal (hflip) et
-#         yaw_v360 = rotation + 90 ,  roll_v360 = 0 , pitch = -90
-#     (le hflip est ajouté au filtre par reproject()). La « rotation » arrive dans
-#     le paramètre roll_deg (cf. frontend), le champ yaw_deg éventuel est ignoré.
+#   • littleplanet (nadir stereographic shader): the shader aims at the nadir with an
+#     azimuth lon = atan2(y,x) + rotation, of INVERSE CHIRALITY to v360 output=sg.
+#     To reproduce the preview exactly a horizontal mirror (hflip) is needed and
+#         yaw_v360 = rotation + 90 ,  roll_v360 = 0 ,  pitch = -90
+#     (the hflip is added to the filter by reproject()). The "rotation" arrives in
+#     the roll_deg parameter (see frontend), the eventual yaw_deg field is ignored.
 #
-#   • equirect360 : aucune orientation.
+#   • equirect360: no orientation.
 
 
 def _flat_angles_v360(yaw: float, pitch: float, roll: float) -> tuple[float, float, float]:
-    """(yaw, pitch, roll) v360 pour la projection flat, depuis la convention visionneuse."""
+    """(yaw, pitch, roll) v360 for the flat projection, from the viewer convention."""
     return _norm180(yaw + 180.0), _norm180(pitch), _norm180(-roll)
 
 
@@ -303,16 +303,16 @@ def _flat_dims_and_vfov(out_w: int, ratio: str, h_fov_deg: float) -> tuple[int, 
     w = _even(out_w)
     h = _even(w * rh / rw)
     h_fov = min(140.0, max(30.0, float(h_fov_deg)))
-    # perspective correcte (pas d'étirement) : v_fov = 2·atan(tan(h_fov/2)·h/w)
+    # correct perspective (no stretching): v_fov = 2·atan(tan(h_fov/2)·h/w)
     v_fov = math.degrees(2.0 * math.atan(math.tan(math.radians(h_fov) / 2.0) * h / w))
     return w, h, v_fov
 
 
 def reproject(equirect_path: str, projection: str, params: dict,
               out_jpg: str, quality: int = 95) -> tuple[int, int]:
-    """Reprojette une image équirect complète vers ``out_jpg`` (retourne (w, h))."""
+    """Reprojects a complete equirect image to ``out_jpg`` (returns (w, h))."""
     if not os.path.isfile(equirect_path):
-        raise PhotoError(f"équirect introuvable : {equirect_path}")
+        raise PhotoError(f"equirect not found: {equirect_path}")
     src_w, src_h = probe_dims(equirect_path)
     out_w = _even(params.get("out_w") or src_w)
     yaw = float(params.get("yaw_deg") or 0.0)
@@ -326,7 +326,7 @@ def reproject(equirect_path: str, projection: str, params: dict,
         w, h, v_fov = _flat_dims_and_vfov(out_w, params.get("ratio") or "16:9",
                                           float(params.get("h_fov_deg") or 90.0))
         h_fov = min(140.0, max(30.0, float(params.get("h_fov_deg") or 90.0)))
-        # convention visionneuse -> v360 (voir _flat_angles_v360 / commentaire ci-dessus)
+        # viewer convention -> v360 (see _flat_angles_v360 / comment above)
         v_yaw, v_pitch, v_roll = _flat_angles_v360(yaw, pitch, roll)
         vf = (f"v360=input=e:output=flat:yaw={v_yaw:g}:pitch={v_pitch:g}:roll={v_roll:g}:"
               f"h_fov={h_fov:g}:v_fov={v_fov:g}:w={w}:h={h}:interp=lanczos")
@@ -334,7 +334,7 @@ def reproject(equirect_path: str, projection: str, params: dict,
         v_span = min(150.0, max(10.0, float(params.get("v_span_deg") or 60.0)))
         w = _even(out_w)
         h = _even(w * math.tan(math.radians(v_span) / 2.0) / math.pi)
-        # cylindrique : le shader d'aperçu partage l'origine de v360 -> yaw inchangé
+        # cylindrical: the preview shader shares v360's origin -> yaw unchanged
         vf = (f"v360=input=e:output=cylindrical:yaw={_norm180(yaw):g}:"
               f"h_fov=360:v_fov={v_span:g}:w={w}:h={h}:interp=lanczos")
     elif projection == "equirect360":
@@ -342,27 +342,27 @@ def reproject(equirect_path: str, projection: str, params: dict,
         h = w // 2
         vf = f"scale={w}:{h}:flags=lanczos" if (w, h) != (src_w, src_h) else "null"
     elif projection == "littleplanet":
-        # FOV fixe = celui de l'aperçu WebGL (viewer.js PLANET_FOV_DEG = 250) : le
-        # shader de prévisualisation ne l'expose pas, l'extraction doit donc utiliser
-        # la même valeur pour que la photo corresponde au cadre affiché.
+        # Fixed FOV = that of the WebGL preview (viewer.js PLANET_FOV_DEG = 250):
+        # the preview shader does not expose it, so extraction must use
+        # the same value for the photo to match the displayed frame.
         fov = 250.0
         w = h = _even(out_w if params.get("out_w") else min(src_w // 2, 4096))
-        # regard vers le bas ; la « rotation » de la planète arrive dans roll_deg.
-        # Le shader d'aperçu est de chiralité inverse à v360 output=sg : hflip +
-        # yaw_v360 = rotation + 90 reproduisent exactement l'aperçu (cf. commentaire).
+        # looking down; the planet "rotation" arrives in roll_deg.
+        # The preview shader has inverse chirality to v360 output=sg: hflip +
+        # yaw_v360 = rotation + 90 reproduce the preview exactly (see comment).
         v_yaw = _norm180(roll + 90.0)
         vf = (f"v360=input=e:output=sg:pitch=-90:yaw={v_yaw:g}:roll=0:"
               f"h_fov={fov:g}:v_fov={fov:g}:w={w}:h={h}:interp=lanczos,hflip")
     else:
         raise PhotoError(
-            f"projection inconnue : {projection} "
-            "(choix : flat, cylindrical, equirect360, littleplanet)")
+            f"unknown projection: {projection} "
+            "(choices: flat, cylindrical, equirect360, littleplanet)")
 
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", equirect_path,
            "-vf", vf + ",format=yuvj420p", "-frames:v", "1", "-q:v", q, out_jpg]
     _run(cmd, timeout=120, what=f"reprojection {projection}")
     if not os.path.isfile(out_jpg):
-        raise PhotoError(f"reprojection {projection} : aucune sortie produite")
+        raise PhotoError(f"{projection} reprojection: no output produced")
 
     if projection == "equirect360":
         _inject_gpano(out_jpg, w, h)
@@ -370,7 +370,7 @@ def reproject(equirect_path: str, projection: str, params: dict,
 
 
 # ---------------------------------------------------------------------------
-# XMP GPano (photo sphérique interactive)
+# GPano XMP (interactive spherical photo)
 # ---------------------------------------------------------------------------
 
 def _gpano_packet(w: int, h: int) -> bytes:
@@ -395,16 +395,16 @@ def _gpano_packet(w: int, h: int) -> bytes:
 
 
 def _inject_gpano(jpg_path: str, w: int, h: int) -> None:
-    """Insère le paquet XMP GPano en APP1 après les segments APPn existants."""
+    """Inserts the GPano XMP packet in APP1 after the existing APPn segments."""
     data = open(jpg_path, "rb").read()
     if data[:2] != b"\xff\xd8":
-        raise PhotoError(f"{jpg_path} n'est pas un JPEG")
+        raise PhotoError(f"{jpg_path} is not a JPEG")
     payload = XMP_MARKER + _gpano_packet(w, h)
     if len(payload) + 2 > 0xFFFF:
-        raise PhotoError("paquet XMP trop grand")
+        raise PhotoError("XMP packet too large")
     seg = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
 
-    # position d'insertion : après SOI et les APP0..APP15 déjà présents
+    # insertion position: after SOI and the already present APP0..APP15
     pos = 2
     while pos + 4 <= len(data) and data[pos] == 0xFF and 0xE0 <= data[pos + 1] <= 0xEF:
         (ln,) = struct.unpack(">H", data[pos + 2:pos + 4])
@@ -414,15 +414,15 @@ def _inject_gpano(jpg_path: str, w: int, h: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Proxy de navigation (choisir l'instant dans un OSV)
+# Navigation proxy (choose the moment in an OSV)
 # ---------------------------------------------------------------------------
 
 def nav_proxy(source_path: str, cache_dir: str) -> str:
-    """Proxy équirect ~688 px H.264 ultrafast pour naviguer dans un OSV."""
+    """~688 px equirect H.264 ultrafast proxy to navigate in an OSV."""
     if not os.path.isfile(source_path):
-        raise PhotoError(f"fichier introuvable : {source_path}")
+        raise PhotoError(f"file not found: {source_path}")
     if _source_kind(source_path) != "osv":
-        raise PhotoError("nav_proxy ne s'applique qu'aux fichiers .OSV")
+        raise PhotoError("nav_proxy only applies to .OSV files")
     os.makedirs(cache_dir, exist_ok=True)
     try:
         mtime = os.path.getmtime(source_path)
@@ -440,6 +440,6 @@ def nav_proxy(source_path: str, cache_dir: str) -> str:
            "-filter_complex", graph, "-map", "[v]", "-an",
            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
            "-movflags", "+faststart", "-f", "mp4", tmp]
-    _run(cmd, timeout=300, what="génération du proxy de navigation")
+    _run(cmd, timeout=300, what="navigation proxy generation")
     os.replace(tmp, out)
     return out

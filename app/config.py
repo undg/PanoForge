@@ -1,17 +1,17 @@
-"""Configuration persistante de PanoForge (ex-« Osmo 360 Studio »).
+"""Persistent configuration of PanoForge (formerly "Osmo 360 Studio").
 
-Un seul utilisateur, une seule config, persistée en JSON dans
-``~/.config/panoforge/config.json``. Valeurs par défaut :
-  - source_dir : carte SD DJI Osmo 360 (DCIM)
-  - output_dir : ``xdg-user-dir VIDEOS``/PanoForge (soit ~/Vidéos/PanoForge sur
-    un système en français ; repli ~/Vidéos puis ~/Videos puis ~), créé au besoin
+Single user, single config, persisted as JSON in
+``~/.config/panoforge/config.json``. Default values:
+  - source_dir: DJI Osmo 360 SD card (DCIM)
+  - output_dir: ``xdg-user-dir VIDEOS``/PanoForge (i.e. ~/Vidéos/PanoForge on
+    a French system; fallback ~/Vidéos then ~/Videos then ~), created as needed
 
-Migration douce du renommage (2026-07-08) : si l'ancien dossier
-``~/.config/osmo360-studio`` (resp. ``~/.cache/osmo360-studio``) existe et que le
-nouveau dossier ``~/.config/panoforge`` (resp. ``~/.cache/panoforge``) n'existe pas
-encore, l'ancien est déplacé vers le nouveau au premier démarrage — la config
-personnalisée (source_dir/output_dir) de l'utilisateur est ainsi conservée telle
-quelle, aucun fichier de sortie déjà produit n'est déplacé.
+Soft migration of the rename (2026-07-08): if the old folder
+``~/.config/osmo360-studio`` (resp. ``~/.cache/osmo360-studio``) exists and the
+new folder ``~/.config/panoforge`` (resp. ``~/.cache/panoforge``) does not exist
+yet, the old one is moved to the new one on first startup — the user's
+customized config (source_dir/output_dir) is thus preserved as-is, no
+already-produced output file is moved.
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ from pathlib import Path
 VERSION = "0.1.0"
 
 def _default_source_dir() -> str:
-    """Dossier source par défaut : premier volume amovible monté (carte SD, clé USB…),
-    en préférant son sous-dossier ``DCIM`` s'il existe ; sinon le dossier personnel.
-    Auto-détecté pour ne coder en dur ni utilisateur ni chemin particulier."""
+    """Default source folder: first mounted removable volume (SD card, USB stick…),
+    preferring its ``DCIM`` subfolder if it exists; otherwise the home folder.
+    Auto-detected to hard-code neither a particular user nor path."""
     user = os.environ.get("USER") or os.environ.get("USERNAME") or Path.home().name
     for base in (f"/run/media/{user}", f"/media/{user}"):
         try:
@@ -45,12 +45,12 @@ def _default_source_dir() -> str:
 
 DEFAULT_SOURCE_DIR = _default_source_dir()
 
-# Ancien défaut (versions précédentes) : migré vers le nouveau au chargement.
+# Old default (previous versions): migrated to the new one on load.
 LEGACY_OUTPUT_DIR = str(Path.home() / "Videos" / "osmo360")
 
 
 def _xdg_videos_dir() -> str:
-    """Dossier Vidéos utilisateur : `xdg-user-dir VIDEOS`, replis ~/Vidéos, ~/Videos, ~."""
+    """User Videos folder: `xdg-user-dir VIDEOS`, fallbacks ~/Vidéos, ~/Videos, ~."""
     try:
         proc = subprocess.run(
             ["xdg-user-dir", "VIDEOS"], capture_output=True, text=True, timeout=5,
@@ -75,17 +75,17 @@ CONFIG_PATH = CONFIG_DIR / "config.json"
 
 CACHE_DIR = Path.home() / ".cache" / "panoforge"
 
-# Anciens emplacements (nom de produit précédent) : migrés au démarrage si
-# présents et que le nouvel emplacement n'existe pas encore (voir _migrate_legacy_dirs).
+# Old locations (previous product name): migrated on startup if
+# present and the new location does not exist yet (see _migrate_legacy_dirs).
 OLD_CONFIG_DIR = Path.home() / ".config" / "osmo360-studio"
 OLD_CACHE_DIR = Path.home() / ".cache" / "osmo360-studio"
 
 
 def _migrate_legacy_dirs() -> None:
-    """Déplace ~/.config|.cache/osmo360-studio vers .../panoforge si besoin.
+    """Move ~/.config|.cache/osmo360-studio to .../panoforge if needed.
 
-    Idempotent (basé sur des tests d'existence) : ne fait rien si l'ancien
-    dossier est absent ou si le nouveau existe déjà (jamais d'écrasement).
+    Idempotent (based on existence checks): does nothing if the old
+    folder is absent or if the new one already exists (never overwrites).
     """
     for old_dir, new_dir in ((OLD_CONFIG_DIR, CONFIG_DIR), (OLD_CACHE_DIR, CACHE_DIR)):
         try:
@@ -122,8 +122,8 @@ def _load() -> AppConfig:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             cfg.source_dir = data.get("source_dir", cfg.source_dir)
             cfg.output_dir = data.get("output_dir", cfg.output_dir)
-            # Migration : l'ancien défaut exact (~/Videos/osmo360) devient le
-            # nouveau défaut basé sur xdg-user-dir VIDEOS (~/Vidéos/osmo360).
+            # Migration: the exact old default (~/Videos/osmo360) becomes the
+            # new default based on xdg-user-dir VIDEOS (~/Vidéos/osmo360).
             if cfg.output_dir == LEGACY_OUTPUT_DIR and LEGACY_OUTPUT_DIR != DEFAULT_OUTPUT_DIR:
                 cfg.output_dir = DEFAULT_OUTPUT_DIR
                 migrated = True
@@ -169,7 +169,7 @@ def update_config(source_dir: str | None = None, output_dir: str | None = None) 
 
 
 def has_nvenc() -> bool:
-    """Détecte si ffmpeg dispose des encodeurs NVENC (GPU NVIDIA)."""
+    """Detect whether ffmpeg has NVENC encoders (NVIDIA GPU)."""
     global _nvenc_cache
     if _nvenc_cache is not None:
         return _nvenc_cache
@@ -195,19 +195,19 @@ def cache_dir() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Détection live des volumes amovibles / caméra (voir SPEC.md — navigation)
+# Live detection of removable volumes / camera (see SPEC.md — navigation)
 # ---------------------------------------------------------------------------
 
 def gvfs_root() -> str:
-    """Racine GVfs de la session courante : /run/user/<uid>/gvfs."""
+    """GVfs root of the current session: /run/user/<uid>/gvfs."""
     return f"/run/user/{os.getuid()}/gvfs"
 
 
 def removable_volumes() -> list[dict]:
-    """Sous-dossiers montés de /run/media/$USER et /media/$USER.
+    """Mounted subfolders of /run/media/$USER and /media/$USER.
 
-    Renvoie ``[{"label": nom_du_volume, "path": chemin_reel}]``, dédoublonné par
-    chemin réel. Best-effort : dossiers inexistants ou illisibles sont ignorés.
+    Returns ``[{"label": volume_name, "path": real_path}]``, deduplicated by
+    real path. Best-effort: nonexistent or unreadable folders are ignored.
     """
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     volumes: list[dict] = []
@@ -234,11 +234,11 @@ def removable_volumes() -> list[dict]:
 
 
 def camera_mounts() -> list[dict]:
-    """Montages MTP/PTP (gvfs) sous /run/user/<uid>/gvfs, best-effort.
+    """MTP/PTP mounts (gvfs) under /run/user/<uid>/gvfs, best-effort.
 
-    Ne remonte que les entrées dont le nom commence par ``mtp:`` ou
-    ``gphoto2:`` (autres protocoles gvfs ignorés). Absence ou dossier vide
-    tolérés silencieusement.
+    Only reports entries whose name starts with ``mtp:`` or
+    ``gphoto2:`` (other gvfs protocols ignored). Absence or empty folder
+    tolerated silently.
     """
     mounts: list[dict] = []
     base = gvfs_root()

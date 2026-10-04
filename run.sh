@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Lance PanoForge : crée le venv si besoin, installe les dépendances (seulement si
-# nécessaire ; forcer avec PANOFORGE_FORCE_INSTALL=1), démarre uvicorn sur
-# 127.0.0.1:8360 et ouvre le navigateur.
+# Launches PanoForge: creates the venv if needed, installs the dependencies (only if
+# necessary; force with PANOFORGE_FORCE_INSTALL=1), starts uvicorn on
+# 127.0.0.1:8360 and opens the browser.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -11,30 +11,30 @@ HOST="127.0.0.1"
 PORT="8360"
 
 if [ ! -d "$VENV_DIR" ]; then
-    echo "Création du venv ($VENV_DIR)..."
+    echo "Creating the venv ($VENV_DIR)..."
     python3 -m venv "$VENV_DIR"
 fi
 
-# Installation conditionnelle : ne réinstalle que si les dépendances clés manquent
-# (ou si PANOFORGE_FORCE_INSTALL=1). Sinon les démarrages suivants sautent l'étape pip
-# — silencieuse et lente — et lancent uvicorn quasi instantanément.
+# Conditional install: only reinstalls if the key dependencies are missing
+# (or if PANOFORGE_FORCE_INSTALL=1). Otherwise subsequent launches skip the pip step
+# — silent and slow — and start uvicorn almost instantly.
 if [ "${PANOFORGE_FORCE_INSTALL:-0}" = "1" ] || \
    ! "$VENV_DIR/bin/python" -c "import fastapi, uvicorn, numpy" >/dev/null 2>&1; then
-    echo "Installation des dépendances (première fois / mise à jour)..."
+    echo "Installing dependencies (first run / update)..."
     "$VENV_DIR/bin/pip" install --upgrade pip
     "$VENV_DIR/bin/pip" install -r requirements.txt
 else
-    echo "Dépendances déjà installées."
+    echo "Dependencies already installed."
 fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
-    echo "Attention : ffmpeg introuvable dans le PATH. Installez-le (ex: sudo apt install ffmpeg)." >&2
+    echo "Warning: ffmpeg not found in PATH. Install it (e.g. sudo apt install ffmpeg)." >&2
 fi
 
 URL="http://${HOST}:${PORT}/"
 
 (
-    # Laisse le serveur démarrer avant d'ouvrir le navigateur.
+    # Let the server start before opening the browser.
     for _ in $(seq 1 30); do
         sleep 0.5
         if curl -fsS -o /dev/null "$URL" 2>/dev/null || curl -fsS -o /dev/null "http://${HOST}:${PORT}/api/config" 2>/dev/null; then
@@ -46,5 +46,5 @@ URL="http://${HOST}:${PORT}/"
     fi
 ) &
 
-echo "Démarrage du serveur sur ${URL}"
+echo "Starting the server on ${URL}"
 exec "$VENV_DIR/bin/uvicorn" app.main:app --host "$HOST" --port "$PORT"

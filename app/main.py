@@ -1,4 +1,4 @@
-"""Point d'entrée FastAPI + uvicorn — PanoForge (127.0.0.1:8360)."""
+"""FastAPI + uvicorn entry point — PanoForge (127.0.0.1:8360)."""
 from __future__ import annotations
 
 import os

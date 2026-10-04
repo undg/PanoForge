@@ -1,4 +1,4 @@
-"""Routes REST — contrat backend/frontend, voir SPEC.md."""
+"""REST routes — backend/frontend contract, see SPEC.md."""
 from __future__ import annotations
 
 import hashlib
@@ -22,13 +22,13 @@ OSV_MEDIA_TYPE = "video/mp4"
 
 
 # ---------------------------------------------------------------------------
-# Aides communes
+# Common helpers
 # ---------------------------------------------------------------------------
 
 def _allowed_roots() -> list[str]:
     cfg = config.get_config()
     roots = []
-    # source, sortie + cache des proxys d'aperçu (H.264 lisibles navigateur)
+    # source, output + preview proxy cache (H.264 readable by browser)
     previews_dir = str(config.CACHE_DIR / "previews")
     for d in (cfg.source_dir, cfg.output_dir, previews_dir):
         try:
@@ -39,14 +39,14 @@ def _allowed_roots() -> list[str]:
 
 
 def _resolve_within_roots(path: str) -> str:
-    """Résout un chemin et vérifie qu'il reste dans source_dir/output_dir
-    (ou le cache des proxys d'aperçu) — pas de traversal arbitraire."""
+    """Resolve a path and check it stays within source_dir/output_dir
+    (or the preview proxy cache) — no arbitrary traversal."""
     real = os.path.realpath(os.path.expanduser(path))
     roots = _allowed_roots()
     for root in roots:
         if real == root or real.startswith(root + os.sep):
             return real
-    raise HTTPException(status_code=403, detail="chemin hors des dossiers autorisés (source/sortie)")
+    raise HTTPException(status_code=403, detail="path outside allowed folders (source/output)")
 
 
 def _guess_media_type(path: str) -> str:
@@ -87,7 +87,7 @@ def _thumb_url(path: str) -> str:
 
 
 def _scan_osv(base_dir: str) -> list[dict]:
-    """Liste les *.OSV dans base_dir, récursif 1 niveau (base_dir + sous-dossiers directs)."""
+    """List *.OSV in base_dir, 1 level recursive (base_dir + direct subfolders)."""
     results = []
     base = Path(base_dir)
     if not base.is_dir():
@@ -108,7 +108,7 @@ def _scan_osv(base_dir: str) -> list[dict]:
                 try:
                     from app.core import osv
                     duration_s = osv.probe(str(entry)).duration_s
-                except Exception:  # noqa: BLE001 - best effort, ne bloque pas le listing
+                except Exception:  # noqa: BLE001 - best effort, does not block the listing
                     duration_s = None
                 results.append({
                     "path": str(entry),
@@ -128,31 +128,31 @@ def get_files(dir: Optional[str] = None):
     real_base = os.path.realpath(os.path.expanduser(base_dir))
     src_root = os.path.realpath(os.path.expanduser(cfg.source_dir))
     if real_base != src_root and not real_base.startswith(src_root + os.sep):
-        raise HTTPException(status_code=403, detail="dossier hors de source_dir")
+        raise HTTPException(status_code=403, detail="folder outside source_dir")
     if not os.path.isdir(real_base):
-        raise HTTPException(status_code=404, detail=f"dossier introuvable : {base_dir}")
+        raise HTTPException(status_code=404, detail=f"folder not found: {base_dir}")
     return _scan_osv(real_base)
 
 
 # ---------------------------------------------------------------------------
-# /api/browse — navigateur de fichiers/dossiers pour l'UI
+# /api/browse — file/folder browser for the UI
 # ---------------------------------------------------------------------------
 
 def _browse_roots() -> list[str]:
-    """Racines autorisées pour la navigation : $HOME, /run/media, /media,
-    /run/user/<uid>/gvfs (montages MTP caméra)."""
+    """Allowed roots for navigation: $HOME, /run/media, /media,
+    /run/user/<uid>/gvfs (MTP camera mounts)."""
     return [os.path.realpath(r) for r in (
         str(Path.home()), "/run/media", "/media", config.gvfs_root(),
     )]
 
 
 def _resolve_browse_dir(path: str) -> tuple[str, str]:
-    """Résout un dossier et renvoie (chemin réel, racine autorisée qui le contient)."""
+    """Resolve a folder and return (real path, allowed root containing it)."""
     real = os.path.realpath(os.path.expanduser(path))
     for root in _browse_roots():
         if real == root or real.startswith(root + os.sep):
             return real, root
-    raise HTTPException(status_code=403, detail="dossier hors du périmètre de navigation")
+    raise HTTPException(status_code=403, detail="folder outside the navigation scope")
 
 
 @router.get("/browse")
@@ -160,7 +160,7 @@ def get_browse(dir: Optional[str] = None, filter: Optional[str] = None):
     base = dir or str(Path.home())
     real, root = _resolve_browse_dir(base)
     if not os.path.isdir(real):
-        raise HTTPException(status_code=404, detail=f"dossier introuvable : {base}")
+        raise HTTPException(status_code=404, detail=f"folder not found: {base}")
 
     exts: set[str] = set()
     if filter:
@@ -171,10 +171,10 @@ def get_browse(dir: Optional[str] = None, filter: Optional[str] = None):
     try:
         entries = sorted(os.scandir(real), key=lambda e: e.name.lower())
     except OSError as exc:
-        raise HTTPException(status_code=403, detail=f"dossier illisible : {exc}") from exc
+        raise HTTPException(status_code=403, detail=f"unreadable folder: {exc}") from exc
     for entry in entries:
         if entry.name.startswith("."):
-            continue  # entrées cachées exclues
+            continue  # hidden entries excluded
         try:
             if entry.is_dir(follow_symlinks=True):
                 try:
@@ -201,9 +201,9 @@ def get_browse(dir: Optional[str] = None, filter: Optional[str] = None):
 
 @router.get("/browse/roots")
 def get_browse_roots():
-    """Raccourcis « Accès rapide » pour le sélecteur de fichiers : home, volumes
-    amovibles, caméra MTP (best-effort), source/sortie configurés. Détection
-    live à chaque appel (voir SPEC.md — Navigation vers les volumes amovibles)."""
+    """Quick-access shortcuts for the file picker: home, removable
+    volumes, MTP camera (best-effort), configured source/output. Live
+    detection on every call (see SPEC.md — Navigation to removable volumes)."""
     shortcuts: list[dict] = []
     seen: set[str] = set()
 
@@ -222,7 +222,7 @@ def get_browse_roots():
         seen.add(real)
         shortcuts.append({"label": label, "path": real, "kind": kind})
 
-    _add("Accueil", str(Path.home()), "home")
+    _add("Home", str(Path.home()), "home")
 
     for vol in config.removable_volumes():
         _add(vol["label"], vol["path"], "removable")
@@ -232,7 +232,7 @@ def get_browse_roots():
 
     cfg = config.get_config()
     _add("Source", cfg.source_dir, "source")
-    _add("Sortie", cfg.output_dir, "output")
+    _add("Output", cfg.output_dir, "output")
 
     return {"shortcuts": shortcuts}
 
@@ -245,7 +245,7 @@ def get_browse_roots():
 def get_thumb(path: str):
     real_path = _resolve_within_roots(path)
     if not os.path.isfile(real_path):
-        raise HTTPException(status_code=404, detail="fichier introuvable")
+        raise HTTPException(status_code=404, detail="file not found")
 
     try:
         mtime = os.path.getmtime(real_path)
@@ -259,7 +259,7 @@ def get_thumb(path: str):
             from app.core import osv
             osv.extract_thumbnail(real_path, str(cache_path))
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=422, detail=f"miniature indisponible : {exc}") from exc
+            raise HTTPException(status_code=422, detail=f"thumbnail unavailable: {exc}") from exc
 
     return FileResponse(str(cache_path), media_type="image/jpeg")
 
@@ -309,12 +309,12 @@ class GpxAnalyzeRequest(BaseModel):
 def post_gpx_analyze(body: GpxAnalyzeRequest):
     video_path = _resolve_within_roots(body.video_path)
     if not os.path.isfile(body.gpx_path):
-        raise HTTPException(status_code=404, detail=f"fichier GPX introuvable : {body.gpx_path}")
+        raise HTTPException(status_code=404, detail=f"GPX file not found: {body.gpx_path}")
 
     try:
         from app.core.gpx import parse_gpx, analyze
     except ImportError as exc:
-        raise HTTPException(status_code=501, detail=f"module core/gpx.py indisponible : {exc}") from exc
+        raise HTTPException(status_code=501, detail=f"module core/gpx.py unavailable: {exc}") from exc
 
     from app.core import osv
     try:
@@ -326,7 +326,7 @@ def post_gpx_analyze(body: GpxAnalyzeRequest):
         points = parse_gpx(body.gpx_path)
         result = analyze(points, info.creation_time_utc, info.duration_s)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=422, detail=f"analyse GPX impossible : {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"GPX analysis failed: {exc}") from exc
     return result
 
 
@@ -342,7 +342,7 @@ class JobOptions(BaseModel):
     interp: Optional[str] = "lanczos"
     mode: Optional[str] = "auto"
     fps_out: Optional[float] = None
-    stabilize: Optional[bool] = False  # phase 2, inactif
+    stabilize: Optional[bool] = False  # phase 2, inactive
     gpx_path: Optional[str] = None
     gpx_offset_s: Optional[float] = None
     embed_camm: Optional[bool] = False
@@ -357,7 +357,7 @@ class JobsCreateRequest(BaseModel):
 @router.post("/jobs")
 def post_jobs(body: JobsCreateRequest):
     if not body.inputs:
-        raise HTTPException(status_code=400, detail="aucun fichier fourni")
+        raise HTTPException(status_code=400, detail="no file provided")
     cfg = config.get_config()
     out_dir = os.path.realpath(os.path.expanduser(cfg.output_dir))
     os.makedirs(out_dir, exist_ok=True)
@@ -366,7 +366,7 @@ def post_jobs(body: JobsCreateRequest):
     for input_path in body.inputs:
         real_input = _resolve_within_roots(input_path)
         if not os.path.isfile(real_input):
-            raise HTTPException(status_code=404, detail=f"fichier introuvable : {input_path}")
+            raise HTTPException(status_code=404, detail=f"file not found: {input_path}")
         stem = Path(real_input).stem
         output_path = os.path.join(out_dir, f"{stem}_360.mp4")
         options = body.options.model_dump()
@@ -384,12 +384,12 @@ def get_jobs():
 def delete_job(job_id: str):
     ok = job_manager.cancel(job_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="job introuvable ou déjà terminé")
+        raise HTTPException(status_code=404, detail="job not found or already finished")
     return {"cancelled": True}
 
 
 # ---------------------------------------------------------------------------
-# /api/photo — extraction de photos 360 (voir SPEC.md)
+# /api/photo — 360 photo extraction (see SPEC.md)
 # ---------------------------------------------------------------------------
 
 class PhotoExtractRequest(BaseModel):
@@ -402,7 +402,7 @@ class PhotoExtractRequest(BaseModel):
     h_fov_deg: float = 90.0
     ratio: str = "16:9"
     v_span_deg: float = 60.0
-    out_w: Optional[int] = None       # défaut : largeur équirect max de la source
+    out_w: Optional[int] = None       # default: max equirect width of the source
 
 
 def _media_url(path: str) -> str:
@@ -422,14 +422,14 @@ def _unique_path(path: str) -> str:
 
 @router.post("/photo/extract")
 def post_photo_extract(body: PhotoExtractRequest):
-    """Extraction synchrone d'une photo depuis un OSV / MP4 360° / JPEG équirect."""
+    """Synchronous photo extraction from an OSV / 360° MP4 / equirect JPEG."""
     import tempfile
 
     from app.core import photo
 
-    source, _ = _resolve_browse_dir(body.source_path)  # mêmes racines que le browse
+    source, _ = _resolve_browse_dir(body.source_path)  # same roots as browse
     if not os.path.isfile(source):
-        raise HTTPException(status_code=404, detail=f"fichier introuvable : {body.source_path}")
+        raise HTTPException(status_code=404, detail=f"file not found: {body.source_path}")
 
     cfg = config.get_config()
     photos_dir = os.path.join(os.path.realpath(os.path.expanduser(cfg.output_dir)), "photos")
@@ -445,7 +445,7 @@ def post_photo_extract(body: PhotoExtractRequest):
     }
     try:
         if body.projection == "flat":
-            photo._parse_ratio(body.ratio)  # 400 immédiat, avant le stitching coûteux
+            photo._parse_ratio(body.ratio)  # immediate 400, before costly stitching
         with tempfile.TemporaryDirectory(prefix="osmophoto_") as td:
             equirect = photo.get_equirect_frame(source, body.time_s, td)
             if params["out_w"] is None and body.projection != "littleplanet":
@@ -460,19 +460,19 @@ def post_photo_extract(body: PhotoExtractRequest):
 
 @router.get("/photo/navproxy")
 def get_photo_navproxy(path: str):
-    """Proxy équirect basse résolution pour naviguer dans un OSV (cache disque)."""
+    """Low-resolution equirect proxy to navigate within an OSV (disk cache)."""
     from app.core import photo
 
     source, _ = _resolve_browse_dir(path)
     if not os.path.isfile(source):
-        raise HTTPException(status_code=404, detail="fichier introuvable")
+        raise HTTPException(status_code=404, detail="file not found")
     ext = os.path.splitext(source)[1].lower()
     if ext in (".mp4", ".mov", ".m4v"):
-        # déjà lisible par le navigateur : pas de proxy nécessaire
+        # already readable by the browser: no proxy needed
         return {"proxy_url": _media_url(source)}
     if ext != ".osv":
         raise HTTPException(status_code=400,
-                            detail="proxy de navigation : source .OSV ou .mp4 attendue")
+                            detail="navigation proxy: .OSV or .mp4 source expected")
     previews_dir = str(config.cache_dir() / "previews")
     try:
         proxy = photo.nav_proxy(source, previews_dir)
@@ -482,7 +482,7 @@ def get_photo_navproxy(path: str):
 
 
 # ---------------------------------------------------------------------------
-# /api/media (support Range pour lecture navigateur)
+# /api/media (Range support for browser playback)
 # ---------------------------------------------------------------------------
 
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
@@ -492,7 +492,7 @@ _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 def get_media(path: str, request: Request):
     real_path = _resolve_within_roots(path)
     if not os.path.isfile(real_path):
-        raise HTTPException(status_code=404, detail="fichier introuvable")
+        raise HTTPException(status_code=404, detail="file not found")
 
     file_size = os.path.getsize(real_path)
     media_type = _guess_media_type(real_path)
@@ -503,10 +503,10 @@ def get_media(path: str, request: Request):
     if range_header:
         m = _RANGE_RE.match(range_header.strip())
         if not m:
-            raise HTTPException(status_code=416, detail="en-tête Range invalide")
+            raise HTTPException(status_code=416, detail="invalid Range header")
         start_str, end_str = m.groups()
         if start_str == "" and end_str == "":
-            raise HTTPException(status_code=416, detail="en-tête Range invalide")
+            raise HTTPException(status_code=416, detail="invalid Range header")
         if start_str == "":
             length = int(end_str)
             start = max(0, file_size - length)
@@ -516,7 +516,7 @@ def get_media(path: str, request: Request):
             end = int(end_str) if end_str else file_size - 1
         if start > end or start >= file_size:
             headers = {"Content-Range": f"bytes */{file_size}"}
-            raise HTTPException(status_code=416, detail="plage hors limites", headers=headers)
+            raise HTTPException(status_code=416, detail="range out of bounds", headers=headers)
         end = min(end, file_size - 1)
         status_code = 206
 
