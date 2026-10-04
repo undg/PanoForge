@@ -1,6 +1,6 @@
-# CLAUDE.md — guide for working on PanoForge
+# AGENTS.md — guide for working on PanoForge
 
-Condensed guide for a Claude Code agent working on this repository. See `SPEC.md` for
+Condensed guide for a Code agent working on this repository. See `SPEC.md` for
 the detailed contract (modules, API, binary formats); this file summarizes the essentials and
 above all the **pitfalls** discovered empirically.
 

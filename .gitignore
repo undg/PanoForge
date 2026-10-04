@@ -4,3 +4,4 @@ __pycache__/
 work/
 .claude/
 .pytest_cache/
+!AGENTS.md
